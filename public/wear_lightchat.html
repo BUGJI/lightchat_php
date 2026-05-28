@@ -63,9 +63,13 @@ select{background-image:url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.o
   <div id="login" class="page active">
     <div class="box-list">
       <div style="padding:20px 12px;text-align:center;color:#888;font-size:14px">LightChat 登录</div>
-      <input id="loginUser" placeholder="用户名" value="">
+      <input id="loginUser" placeholder="邮箱 / 用户名" value="">
       <input id="loginPass" type="password" placeholder="密码" value="" style="margin-top:8px">
-      <button onclick="doLogin()" style="margin-top:12px">登录</button>
+      <div style="display:flex;align-items:center;gap:6px;padding:8px 0;font-size:13px;color:#888">
+        <input type="checkbox" id="loginAgree" style="width:auto;min-width:auto;margin:0">
+        <span>同意 <a href="terms/privacy.html" target="_blank" style="color:#4a90e2">隐私政策</a></span>
+      </div>
+      <button onclick="doLogin()" style="margin-top:4px">登录</button>
       <button onclick="showPage('register')" class="small" style="margin-top:4px;background:transparent">注册新账号</button>
       <div style="text-align:center;margin-top:8px">
         <button onclick="showSettings()" class="small" style="background:transparent;color:#666;width:auto;min-width:auto;font-size:13px">⚙️ API 地址</button>
@@ -78,10 +82,14 @@ select{background-image:url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.o
   <div id="register" class="page">
     <div class="box-list">
       <div style="padding:20px 12px;text-align:center;color:#888;font-size:14px">注册新账号</div>
-      <input id="regUser" placeholder="用户名">
+      <input id="regUser" placeholder="用户名（用于展示）">
       <input id="regPass" type="password" placeholder="密码（至少6位）" style="margin-top:8px">
-      <input id="regEmail" placeholder="邮箱（可选）" style="margin-top:8px">
-      <button onclick="doRegister()" style="margin-top:12px">注册</button>
+      <input id="regEmail" type="email" placeholder="邮箱 *" style="margin-top:8px">
+      <div style="display:flex;align-items:center;gap:6px;padding:8px 0;font-size:13px;color:#888">
+        <input type="checkbox" id="regAgree" style="width:auto;min-width:auto;margin:0">
+        <span>同意 <a href="terms/privacy.html" target="_blank" style="color:#4a90e2">隐私政策</a></span>
+      </div>
+      <button onclick="doRegister()" style="margin-top:4px">注册</button>
       <button onclick="showPage('login')" class="small" style="margin-top:4px;background:transparent">← 返回登录</button>
       <div id="regError" style="text-align:center;color:#f44;font-size:13px;min-height:20px;margin-top:8px"></div>
     </div>
@@ -187,13 +195,17 @@ async function doLogin() {
   const p = document.getElementById('loginPass').value;
   const errEl = document.getElementById('loginError');
   errEl.textContent = '';
-  if (!u || !p) { errEl.textContent = '请填写用户名和密码'; return; }
+  if (!u || !p) { errEl.textContent = '请填写完整'; return; }
+  if (!document.getElementById('loginAgree').checked) {
+    errEl.textContent = '请先同意隐私政策'; return;
+  }
   try {
     const r = await api('/token/login.php', { method: 'POST', body: JSON.stringify({ username: u, password: p }) });
     S.token = r.token;
     S.user = { id: r.user_id, username: r.username, role: r.role };
     localStorage.setItem('lc_token', r.token);
     localStorage.setItem('lc_username', r.username);
+    localStorage.setItem('lc_email', u);
     await initApp();
     showPage('chat');
   } catch (e) { errEl.textContent = e.message; }
@@ -205,8 +217,11 @@ async function doRegister() {
   const em = document.getElementById('regEmail').value.trim();
   const errEl = document.getElementById('regError');
   errEl.textContent = '';
-  if (!u || !p) { errEl.textContent = '请填写用户名和密码'; return; }
+  if (!u || !p || !em) { errEl.textContent = '请填写所有必填项'; return; }
   if (p.length < 6) { errEl.textContent = '密码至少6位'; return; }
+  if (!document.getElementById('regAgree').checked) {
+    errEl.textContent = '请先同意隐私政策'; return;
+  }
   try {
     const r = await api('/token/register.php', { method: 'POST', body: JSON.stringify({ username: u, password: p, email: em }) });
     S.token = r.token;
@@ -589,6 +604,9 @@ window.onload = function() {
     });
   } else {
     showPage('login');
+    // 回填上次登录的邮箱
+    const savedEmail = localStorage.getItem('lc_email');
+    if (savedEmail) document.getElementById('loginUser').value = savedEmail;
   }
 };
 </script>

@@ -61,6 +61,8 @@ class Database {
                 username VARCHAR(50) UNIQUE NOT NULL,
                 password VARCHAR(255) NOT NULL,
                 email VARCHAR(100),
+                contact VARCHAR(100),
+                reg_ip VARCHAR(45),
                 avatar VARCHAR(255),
                 role VARCHAR(20) DEFAULT 'member',
                 status TINYINT DEFAULT 1,
@@ -180,6 +182,22 @@ class Database {
                 admin_id INTEGER,
                 reason TEXT,
                 expires_at TIMESTAMP,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ");
+        
+        // 创建审计日志表（合规留存）
+        $this->driver->execute("
+            CREATE TABLE IF NOT EXISTS audit_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER,
+                username VARCHAR(50),
+                action VARCHAR(50) NOT NULL,
+                target_type VARCHAR(20),
+                target_id INTEGER,
+                ip VARCHAR(45),
+                user_agent TEXT,
+                detail TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         ");

@@ -28,6 +28,7 @@ $input = get_json_input();
 $username = trim($input['username'] ?? '');
 $password = $input['password'] ?? '';
 $email    = trim($input['email'] ?? '');
+$contact  = trim($input['contact'] ?? '');
 
 // ── 参数校验 ──
 if ($username === '' || $password === '') {
@@ -68,9 +69,23 @@ if (mb_strlen($password, 'UTF-8') < 6) {
     json_response(400, ['error' => 'weak_password', 'message' => '密码长度不能少于 6 位']);
 }
 
-// 邮箱格式（如果提供）
-if ($email !== '' && !filter_var($email, FILTER_VALIDATE_EMAIL)) {
+// ── 邮箱格式（必填） ──
+if ($email === '') {
+    json_response(400, ['error' => 'missing_email', 'message' => '邮箱为必填项']);
+}
+if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
     json_response(400, ['error' => 'invalid_email', 'message' => '邮箱格式不正确']);
+}
+
+// 检查邮箱是否已注册
+$existingEmail = $db->get('users', ['email' => $email]);
+if ($existingEmail) {
+    json_response(409, ['error' => 'duplicate_email', 'message' => '该邮箱已被注册']);
+}
+
+// 联系方式（可选，不限格式）
+if ($contact !== '' && mb_strlen($contact, 'UTF-8') > 100) {
+    json_response(400, ['error' => 'invalid_contact', 'message' => '联系方式过长']);
 }
 
 // ── 敏感词检查 ──
@@ -101,14 +116,6 @@ try {
     if ($existing) {
         json_response(409, ['error' => 'duplicate_username', 'message' => '用户名已被注册']);
     }
-
-    // 检查邮箱（如果提供）
-    if ($email !== '') {
-        $existingEmail = $db->get('users', ['email' => $email]);
-        if ($existingEmail) {
-            json_response(409, ['error' => 'duplicate_email', 'message' => '邮箱已被注册']);
-        }
-    }
 } catch (Exception $e) {
     json_response(500, ['error' => 'db_error', 'message' => '数据库查询失败']);
 }
@@ -120,12 +127,24 @@ $userData = [
     'username' => $username,
     'password' => $passwordHash,
     'email'    => $email,
+    'contact'  => $contact,
+    'reg_ip'   => $_SERVER['REMOTE_ADDR'] ?? '',
     'role'     => isset($config['user']['default_role']) ? $config['user']['default_role'] : 'member',
     'status'   => 1,
 ];
 
 try {
     $userId = $db->insert('users', $userData);
+
+    // 审计日志：注册
+    $db->insert('audit_logs', [
+        'user_id'    => $userId,
+        'username'   => $username,
+        'action'     => 'register',
+        'ip'         => $_SERVER['REMOTE_ADDR'] ?? '',
+        'user_agent' => $_SERVER['HTTP_USER_AGENT'] ?? '',
+        'detail'     => json_encode(['email' => $email, 'contact' => $contact], JSON_UNESCAPED_UNICODE),
+    ]);
 } catch (Exception $e) {
     json_response(500, ['error' => 'insert_failed', 'message' => '用户创建失败']);
 }

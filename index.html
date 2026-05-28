@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
+    <title>入口跳转</title>
+    <!-- 极简风格，没有任何华丽装饰，只完成核心功能：访问后去 /public/index.html -->
+</head>
+<body>
+    <!-- 
+        最简易的入口页面：
+        1. 无任何外部样式、无复杂脚本。
+        2. 页面加载后立即执行客户端重定向到 /public/index.html。
+        3. 如果因某些原因（例如路径问题或JavaScript被禁用）未能跳转，则显示一个纯文本的备用链接。
+        4. 符合“非常简易不华丽”的要求，仅实现功能。
+    -->
+    <script>
+        // 确保页面完全加载完成后立刻重定向 (实际上放在head或body中立即执行亦可)
+        // 为了防止可能的解析延迟，直接在脚本中执行重定向最为直接。
+        // 使用 window.location.replace 可避免在历史记录中保留当前入口页，更符合“去往”的语义；
+        // 但为了通用性，也可使用 window.location.href。这里使用 replace 实现干净跳转。
+        (function() {
+            // 目标路径: /public/index.html (根据规范，/ 代表当前站点根目录)
+            var targetUrl = '/public/index.html';
+            // 执行重定向替换当前历史条目，直接前往目标页面
+            window.location.replace(targetUrl);
+        })();
+    </script>
+    <!-- 如果脚本执行失败(极端情况如浏览器安全限制但极少见)，提供一个纯文本备用链接 -->
+    <noscript>
+        <div style="font-family: monospace; margin: 2rem; text-align: center;">
+            <p>您的浏览器未启用 JavaScript，无法自动跳转。</p>
+            <p>请点击下方链接手动访问：</p>
+            <a href="/public/index.html">/public/index.html</a>
+        </div>
+    </noscript>
+    <!-- 
+        对于有JavaScript的正常环境，用户几乎看不到任何页面内容，瞬间跳转。
+        符合“不华丽”、“简易”、“入口”的定义。
+    -->
+</body>
+</html>

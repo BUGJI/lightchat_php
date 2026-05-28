@@ -92,7 +92,7 @@ return [
         // 资料卡配置
         'profile' => [
             'public_fields' => ['username', 'avatar', 'role', 'join_date', 'status'],  // 公开可见
-            'private_fields' => ['email', 'phone', 'real_name', 'birthday'],           // 仅自己和admin可见
+            'private_fields' => ['email', 'contact', 'real_name', 'birthday'],           // 仅自己和admin可见
             'editable_fields' => ['avatar', 'bio', 'nickname', 'signature'],           // 用户可编辑
         ],
         

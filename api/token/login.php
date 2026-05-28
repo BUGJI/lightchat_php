@@ -29,18 +29,27 @@ $username = trim($input['username'] ?? '');
 $password = $input['password'] ?? '';
 
 if ($username === '' || $password === '') {
-    json_response(400, ['error' => 'missing_fields', 'message' => '用户名和密码不能为空']);
+    json_response(400, ['error' => 'missing_fields', 'message' => '邮箱（或用户名）和密码不能为空']);
 }
 
-// ── 查找用户 ──
+// ── 查找用户（支持邮箱或用户名登录） ──
 try {
-    $user = $db->get('users', ['username' => $username]);
+    // 包含 @ 则按邮箱查，否则按用户名
+    if (strpos($username, '@') !== false) {
+        $user = $db->get('users', ['email' => $username]);
+    } else {
+        $user = $db->get('users', ['username' => $username]);
+    }
+    // 回退：如果按邮箱没找到，尝试按用户名（用户可能用邮箱前缀当用户名）
+    if (!$user && strpos($username, '@') !== false) {
+        $user = $db->get('users', ['username' => $username]);
+    }
 } catch (Exception $e) {
     json_response(500, ['error' => 'db_error', 'message' => '数据库查询失败']);
 }
 
 if (!$user) {
-    json_response(401, ['error' => 'invalid_credentials', 'message' => '用户名或密码错误']);
+    json_response(401, ['error' => 'invalid_credentials', 'message' => '账号或密码错误']);
 }
 
 // ── 检查用户状态 ──
@@ -71,6 +80,15 @@ try {
         'ip'         => $_SERVER['REMOTE_ADDR'] ?? '',
         'user_agent' => $_SERVER['HTTP_USER_AGENT'] ?? '',
         'expires_at' => $expiresAt,
+    ]);
+
+    // 审计日志：登录
+    $db->insert('audit_logs', [
+        'user_id'    => $user['id'],
+        'username'   => $user['username'],
+        'action'     => 'login',
+        'ip'         => $_SERVER['REMOTE_ADDR'] ?? '',
+        'user_agent' => $_SERVER['HTTP_USER_AGENT'] ?? '',
     ]);
 } catch (Exception $e) {
     json_response(500, ['error' => 'session_failed', 'message' => '令牌创建失败']);

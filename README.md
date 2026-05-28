@@ -1,42 +1,64 @@
-# lightchat_php
-可以放进PHP虚拟主机的聊天IM，功能简单，配置简单，
+# LightChat PHP
 
-# 功能介绍
+轻量级 PHP 聊天系统，专为虚拟主机环境设计。
 
-- 群组聊天
-- 私信聊天
-- 上传文件
-- 可支持API
+## 特性
 
-# 搭建
+- **零数据库依赖** — 默认使用 JSON 文件存储（LocalDriver），无需 MySQL
+- **PHP 7.4+** — 兼容主流虚拟主机
+- **RESTful API** — 完整的频道/私聊/文件上传/审计日志接口
+- **双客户端** — 桌面版 SPA + 手表优化版，均单文件自包含
+- **合规留存** — 审计日志、IP 记录、聊天内容明文存档
 
-## 准备
+## 快速开始
 
-虚拟主机配置条件：
-- 支持 PHP7.4+
-- 支持数据库（也可以选择本地模式）
-- 支持上传文件
-- 可选：带宽尽量达到5mbps以上（不知道带宽可以用[speedtest_php](https://github.com/BUGJI/speedtest_php)测试）
+1. 将整个目录上传到虚拟主机 web 根目录
+2. 确保 `data/` `uploads/` `logs/` 目录可写（755）
+3. 访问 `http://your-host/Lightchat/public/` 即可使用
 
-## 搭建
+## 目录结构
 
-1. 首先去寻找上方配置的虚拟主机，绑定域名，直到虚拟主机的默认页可以通过你绑定的域名显示
-2. 给整个项目解压到虚拟主机里面，将public的文件夹按需放到根目录
-   
-   public文件夹存放所有的网页客户端
+```
+Lightchat/
+├── api/               # REST API 端点
+│   ├── token/         # 注册 / 登录 / Token 刷新
+│   ├── channels/      # 频道 CRUD
+│   ├── messages/      # 消息发送 / 历史 / 轮询 / 删除
+│   ├── private/       # 私聊
+│   ├── users/         # 用户资料 / 搜索 / 列表
+│   ├── files/         # 文件上传
+│   ├── server/        # 服务器资源配额
+│   └── admin/         # 审计日志 / 数据导出
+├── core/              # 数据库抽象层
+├── drivers/           # 存储驱动 (Local / MySQL / SQLite)
+├── public/            # 前端客户端
+│   ├── index.html     # 桌面版 SPA
+│   ├── wear_lightchat.html  # 手表优化版
+│   └── terms/         # 隐私政策 / 服务条款
+├── config.php         # 全局配置
+└── data/              # JSON 数据存储（自动创建）
+```
 
-   | 文件名 | 客户端类型 |
-   | ---- | ----------- |
-   | index.html | 标准客户端，适用于手机，电脑|
-   | wear_lightchat.html | 手表客户端，适用于屏幕大小有限的设备 |
-   
-3. 访问你的域名，注册个账号，使用
+## API 概览
 
-# 故障排查
+| 模块 | 端点 |
+|---|---|
+| 认证 | `POST /api/token/register.php` `login.php` `refresh.php` |
+| 频道 | `GET/POST /api/channels/list.php` `create.php` `join.php` `leave.php` |
+| 消息 | `GET/POST /api/messages/send.php` `history.php` `delete.php` `poll.php` |
+| 私聊 | `GET/POST /api/private/list.php` `send.php` `history.php` |
+| 用户 | `GET/POST /api/users/profile.php` `search.php` `list.php` |
+| 文件 | `POST /api/files/upload.php` |
+| 管理 | `GET /api/admin/audit.php` `export.php` `server/status.php` |
 
-访问 `你的域名/api/health.php` 会执行自动检查，请按照此说明排查即可
+## 客户端 API 地址配置
 
-# 致谢
+两个客户端都支持三种方式指定 API 基础地址：
 
-- deepseek v4 flash
-- deepseek v4 pro
+1. URL 参数 `?api=http://host/path`
+2. 设置面板手动输入
+3. 留空使用同源地址
+
+## 许可
+
+MIT
