@@ -3,40 +3,60 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
-    <title>入口跳转</title>
-    <!-- 极简风格，没有任何华丽装饰，只完成核心功能：访问后去 /public/index.html -->
+    <title>入口跳转 · 自适应</title>
+    <!-- 极简风格，0样式装饰，纯功能实现 -->
 </head>
 <body>
     <!-- 
-        最简易的入口页面：
-        1. 无任何外部样式、无复杂脚本。
-        2. 页面加载后立即执行客户端重定向到 /public/index.html。
-        3. 如果因某些原因（例如路径问题或JavaScript被禁用）未能跳转，则显示一个纯文本的备用链接。
-        4. 符合“非常简易不华丽”的要求，仅实现功能。
+        简易入口页面 - 增强版：
+        1. 访问后自动检测视口宽度/高度（基于屏幕或视口实际尺寸）。
+        2. 如果宽度 < 300px 或者 高度 < 300px，则跳转到 /public/wear_lightchat.html
+        3. 否则跳转到 /public/index.html
+        4. 不依赖任何第三方库，无华丽动画或复杂布局。
+        5. 若JavaScript被禁用，显示纯文本备用手动链接。
     -->
     <script>
-        // 确保页面完全加载完成后立刻重定向 (实际上放在head或body中立即执行亦可)
-        // 为了防止可能的解析延迟，直接在脚本中执行重定向最为直接。
-        // 使用 window.location.replace 可避免在历史记录中保留当前入口页，更符合“去往”的语义；
-        // 但为了通用性，也可使用 window.location.href。这里使用 replace 实现干净跳转。
         (function() {
-            // 目标路径: /public/index.html (根据规范，/ 代表当前站点根目录)
-            var targetUrl = '/public/index.html';
-            // 执行重定向替换当前历史条目，直接前往目标页面
+            // 获取视口/窗口的宽高（支持移动端与桌面），兼容主流浏览器
+            // 使用 window.innerWidth / window.innerHeight 获取实际可视区尺寸。
+            // 如果因为安全沙箱或非常规环境无法获取，则fallback使用 screen.width/height 近似，
+            // 但绝大部分情况 window.innerWidth/Height 更准确反映“页面区域”。
+            var viewportWidth = window.innerWidth;
+            var viewportHeight = window.innerHeight;
+            
+            // 极端情况: 某些旧浏览器或iframe沙盒可能导致innerWidth为0? 做兜底处理:
+            // 若获取不到合理值(<=0)则尝试使用 screen.width / screen.height (设备屏幕分辨率)
+            // 但通常不会出现。为了稳健：
+            if (typeof viewportWidth !== 'number' || viewportWidth <= 0) {
+                viewportWidth = screen.width || 0;
+            }
+            if (typeof viewportHeight !== 'number' || viewportHeight <= 0) {
+                viewportHeight = screen.height || 0;
+            }
+
+            // 核心判断：宽度小于300 或 高度小于300 → 穿戴/超小屏专用页面
+            var isTinyDevice = (viewportWidth < 300) || (viewportHeight < 300);
+            
+            // 目标路径
+            var targetUrl = isTinyDevice ? '/public/wear_lightchat.html' : '/public/index.html';
+            
+            // 执行干净重定向（不留下当前入口页面历史记录，符合“跳转”预期）
+            // 使用 replace 避免用户按返回时反复回到这个入口判断页面
             window.location.replace(targetUrl);
         })();
     </script>
-    <!-- 如果脚本执行失败(极端情况如浏览器安全限制但极少见)，提供一个纯文本备用链接 -->
+    
+    <!-- 优雅降级：如果 JavaScript 被禁用或者执行失败时，展示手动入口链接 -->
     <noscript>
-        <div style="font-family: monospace; margin: 2rem; text-align: center;">
-            <p>您的浏览器未启用 JavaScript，无法自动跳转。</p>
-            <p>请点击下方链接手动访问：</p>
-            <a href="/public/index.html">/public/index.html</a>
+        <div style="font-family: system-ui, monospace; margin: 2rem; padding: 1rem; text-align: center; line-height: 1.5;">
+            <p><strong>⚡ 轻量入口</strong> — 您的浏览器未启用 JavaScript，无法自动识别屏幕尺寸并跳转。</p>
+            <p>请根据您的设备手动选择：</p>
+            <ul style="list-style: none; padding: 0;">
+                <li style="margin: 1rem 0;">🔹 标准界面：<a href="/public/index.html" style="text-decoration: underline;">/public/index.html</a></li>
+                <li style="margin: 1rem 0;">⌚ 超小屏/穿戴设备 (宽<300px 或 高<300px)：<a href="/public/wear_lightchat.html" style="text-decoration: underline;">/public/wear_lightchat.html</a></li>
+            </ul>
+            <p style="font-size: 0.8rem; color: #555;">提示：正常浏览器会自动跳转，无需手动点击。</p>
         </div>
     </noscript>
-    <!-- 
-        对于有JavaScript的正常环境，用户几乎看不到任何页面内容，瞬间跳转。
-        符合“不华丽”、“简易”、“入口”的定义。
-    -->
 </body>
 </html>
