@@ -1,0 +1,37 @@
+# 数据目录（JSON 存储）
+data/*.json
+
+# 上传文件
+uploads/*
+
+# 日志
+logs/*
+
+# 备份
+backups/*
+
+# 编辑器
+*.swp
+*.swo
+*~
+.vscode/
+.idea/
+
+# 操作系统
+.DS_Store
+Thumbs.db
+
+# 系统文件
+/.deepseek/
+BOOTSTRAP.md
+HEARTBEAT.md
+TOOLS.md
+SOUL.md
+USER.md
+IDENTITY.md
+AGENTS.md
+MEMORY.md
+memory/
+
+# 原始 voecechat 手表客户端
+public/wear.html
