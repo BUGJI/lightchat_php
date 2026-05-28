@@ -1,0 +1,596 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<meta name="theme-color" content="#000000">
+<title>LightChat Watch</title>
+<style>
+/* ════════════════════════════════════════════
+   手表优化暗色主题 — 与 wear.html 完全一致
+   ════════════════════════════════════════════ */
+body,div,span,input,button,select,textarea,img,a{color:#eee;border:none;margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+.box-list,.userlist,.message-text,#inputBar,input,button,select{border:1px solid #333}
+input,textarea,button,select,fieldset{background-color:#1a1a1a;border:1px solid #333;border-radius:8px;font-family:system-ui,-apple-system,sans-serif;font-size:16px;padding:10px 12px;width:100%;-webkit-appearance:none;appearance:none;outline:none;min-height:44px}
+button{background-color:#2a2a2a;font-weight:500;cursor:pointer;transition:background-color .1s}
+button:active{background-color:#3a3a3a}
+button:disabled{color:#666;background-color:#1a1a1a}
+input:focus,button:focus,select:focus{border-color:#4a90e2}
+textarea{background-color:#1a1a1a;resize:both;min-height:80px}
+img{max-width:100%;border-radius:8px;background-color:#1a1a1a}
+body{margin:0;font-size:16px;font-family:system-ui,-apple-system,'Helvetica Neue',sans-serif;background-color:#000;overflow-x:hidden;overflow-y:scroll;-webkit-overflow-scrolling:touch}
+.page{display:none;padding-bottom:20px}
+.page.active{display:block}
+.box-list{padding:8px 6px;border:none}
+.userlist{display:flex;align-items:center;gap:12px;padding:10px 12px;margin:4px 0;background-color:#1a1a1a;border-radius:12px;border:1px solid #333;min-height:64px;cursor:pointer;transition:background-color .1s;position:relative}
+.userlist:active{background-color:#2a2a2a}
+.head{width:44px;height:44px;border-radius:22px;object-fit:cover;background-color:#333;display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:600;color:#999;flex-shrink:0}
+.user-pre{flex:1;min-width:0}
+.name{font-size:16px;font-weight:500;margin-bottom:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.message-pre{font-size:14px;color:#999;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.read-pre{font-size:12px;padding:4px 8px;border-radius:12px;white-space:nowrap}
+.read-pre.unread{color:#f44;background-color:rgba(255,68,68,.1)}
+.read-pre.read{color:#888}
+#topBar{position:sticky;top:0;background-color:#0a0a0a;border-bottom:1px solid #333;padding:8px 12px;display:flex;align-items:center;gap:12px;z-index:10;backdrop-filter:blur(5px)}
+#topBar a{font-size:24px;padding:8px 16px 8px 8px;margin-left:-8px;cursor:pointer;min-height:44px;display:flex;align-items:center;color:#4a90e2;text-decoration:none;min-width:44px}
+#topBar a:active{opacity:.7}
+#topBar div{flex:1;text-align:center;font-size:18px;font-weight:500;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding:0 4px;margin-right:45px}
+#box{overflow-y:auto;padding:12px 8px 50px}
+.message-text{max-width:85%;padding:10px 14px;margin:4px 8px;background-color:#2a2a2a;border-radius:18px 18px 18px 4px;border:1px solid #444;word-break:break-word;font-size:16px;line-height:1.4;width:fit-content}
+.message-text.selfmessage{margin-left:auto;background-color:#1e3a5f;border-color:#2c4a7f;border-radius:18px 18px 4px 18px}
+.message-text.img{padding:4px;background-color:transparent;border:none;max-width:200px}
+.message-text.img img{max-height:200px;width:auto;border-radius:8px;cursor:pointer;object-fit:cover}
+.message-sender-name{font-size:12px;color:#888;margin:4px 12px 2px}
+.system-message-text{text-align:center;color:#888;font-size:12px;margin:16px auto;padding:6px 12px;max-width:80%;background-color:rgba(255,255,255,.05);border-radius:16px}
+.reply-preview{font-size:12px;color:#999;background:#111;padding:4px 6px;margin-top:4px;border-left:2px solid #555;border-radius:4px;width:max-content}
+.reply-preview.selfmessage{margin-left:auto;margin-right:8px}
+#inputBar{position:fixed;bottom:0;left:0;right:0;display:flex;gap:8px;padding:8px 12px;background-color:#0a0a0a;border-top:1px solid #333;z-index:20;backdrop-filter:blur(5px)}
+#inputBar input{flex:1;margin:0;font-size:16px;padding:10px 14px}
+#inputBar button{width:auto;min-width:70px;margin:0;white-space:nowrap}
+#imgViewer{display:none;position:fixed;top:0;left:0;width:100%;height:100%;background-color:rgba(0,0,0,.95);z-index:9999;cursor:pointer}
+#imgViewerImg{max-width:90%;max-height:90%;position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);border-radius:12px;box-shadow:0 4px 20px rgba(0,0,0,.5)}
+select{background-image:url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 12 12" fill="%23eee"><path d="M6 9L0 3h12z"/></svg>');background-repeat:no-repeat;background-position:right 12px center;background-size:12px;padding-right:32px}
+.small{font-size:14px}
+.settings-footer{color:#444;text-align:center;padding:12px 0}
+.message-group{display:flex;flex-direction:column;margin-bottom:4px}
+@media screen and (max-width:280px){.head{width:36px;height:36px}.message-text{font-size:15px}.message-text.img img{max-height:100px}.name{font-size:15px}.message-pre{font-size:13px}.userlist{padding:8px 10px}}
+</style>
+</head>
+<body>
+
+<div id="scaleRoot">
+  <!-- ═══ 登录页 ═══ -->
+  <div id="login" class="page active">
+    <div class="box-list">
+      <div style="padding:20px 12px;text-align:center;color:#888;font-size:14px">LightChat 登录</div>
+      <input id="loginUser" placeholder="用户名" value="">
+      <input id="loginPass" type="password" placeholder="密码" value="" style="margin-top:8px">
+      <button onclick="doLogin()" style="margin-top:12px">登录</button>
+      <button onclick="showPage('register')" class="small" style="margin-top:4px;background:transparent">注册新账号</button>
+      <div style="text-align:center;margin-top:8px">
+        <button onclick="showSettings()" class="small" style="background:transparent;color:#666;width:auto;min-width:auto;font-size:13px">⚙️ API 地址</button>
+      </div>
+      <div id="loginError" style="text-align:center;color:#f44;font-size:13px;min-height:20px;margin-top:8px"></div>
+    </div>
+  </div>
+
+  <!-- ═══ 注册页 ═══ -->
+  <div id="register" class="page">
+    <div class="box-list">
+      <div style="padding:20px 12px;text-align:center;color:#888;font-size:14px">注册新账号</div>
+      <input id="regUser" placeholder="用户名">
+      <input id="regPass" type="password" placeholder="密码（至少6位）" style="margin-top:8px">
+      <input id="regEmail" placeholder="邮箱（可选）" style="margin-top:8px">
+      <button onclick="doRegister()" style="margin-top:12px">注册</button>
+      <button onclick="showPage('login')" class="small" style="margin-top:4px;background:transparent">← 返回登录</button>
+      <div id="regError" style="text-align:center;color:#f44;font-size:13px;min-height:20px;margin-top:8px"></div>
+    </div>
+  </div>
+
+  <!-- ═══ 聊天列表 ═══ -->
+  <div id="chat" class="page">
+    <div class="box-list" id="chat_list"></div>
+    <div class="box-list">
+      <div class="name" onclick="showPage('settings')" style="padding:12px;text-align:center;cursor:pointer">⚙️ 设置</div>
+    </div>
+  </div>
+
+  <!-- ═══ 设置 ═══ -->
+  <div id="settings" class="page">
+    <div class="box-list">
+      <div class="userlist" onclick="showPage('chat')" data-id="back-to-chat">
+        <div class="user-pre"><div class="name">← 返回聊天</div></div>
+      </div>
+      <div class="userlist" style="cursor:default">
+        <div class="user-pre"><div class="name">API 基础地址</div></div>
+        <div><input id="apiBaseSetting" style="width:auto;min-width:140px;font-size:12px" placeholder="留空=同源"></div>
+      </div>
+      <div class="userlist" style="cursor:default">
+        <div class="user-pre"><div class="name">显示缩放</div></div>
+        <div><select onchange="setScale(this.value)" style="width:auto;min-width:80px">
+          <option value="100">100%</option><option value="125" selected>125%</option>
+          <option value="150">150%</option><option value="175">175%</option><option value="200">200%</option>
+        </select></div>
+      </div>
+      <div class="userlist" style="cursor:default">
+        <div class="user-pre"><div class="name">轮询间隔</div></div>
+        <div><select onchange="setPollInterval(this.value)" style="width:auto;min-width:80px">
+          <option value="1">1秒</option><option value="2" selected>2秒</option>
+          <option value="5">5秒</option><option value="10">10秒</option><option value="30">30秒</option>
+        </select></div>
+      </div>
+      <div class="userlist" onclick="refreshChats()"><div class="user-pre"><div class="name">刷新列表</div></div></div>
+      <div class="userlist" onclick="doLogout()"><div class="user-pre"><div class="name" style="color:#ff6b6b">退出登录</div></div></div>
+    </div>
+    <div class="box-list"><div class="settings-footer">LightChat Watch v1.0</div></div>
+  </div>
+
+  <!-- ═══ 聊天窗口 ═══ -->
+  <div id="chatbox" class="page">
+    <div id="topBar">
+      <a onclick="goBack()">←</a>
+      <div id="chatboxTitle">聊天</div>
+      <button id="joinBtn" onclick="joinCurrentChannel()" style="display:none;width:auto;min-width:60px;min-height:36px;font-size:13px;padding:6px 12px;background:#4a90e2;color:#fff;border:none">加入</button>
+    </div>
+    <div id="box"></div>
+    <div id="inputBar">
+      <input id="msg" placeholder="输入消息..." value="">
+      <button id="sendBtn" onclick="sendMsg()">➤</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ 图片查看器 ═══ -->
+<div id="imgViewer" onclick="hideImg()"><img id="imgViewerImg" src="" alt=""></div>
+
+<script>
+/* ════════════════════════════════════════════
+   LightChat Watch 客户端
+   适配 PHP API 后端 (不依赖任何 CDN)
+   ════════════════════════════════════════════ */
+
+// ── API 配置 ──
+let API_BASE = localStorage.getItem('lc_api_base') || '';
+if (location.search) { const m = location.search.match(/[?&]api=([^&]+)/); if (m) { API_BASE = decodeURIComponent(m[1]); localStorage.setItem('lc_api_base', API_BASE); } }
+
+// ── 全局状态 ──
+const S = {
+  user: null,       // { id, username, role }
+  token: null,      // Bearer token
+  channels: [],     // [{ id, display_name, type, ... }]
+  privateChats: [], // [{ id, other_user_id, other_username, ... }]
+  users: [],        // all users
+  activeChat: null, // { id, type:'channel'|'private', name }
+  joinedIds: new Set(),
+  messages: [],     // current chat messages
+  pollTimer: null,
+  pollInterval: 2000,
+  lastPollId: 0,
+  lastMsgTime: 0,
+  userCache: new Map(), // uid → {username, avatar}
+};
+
+// ── API 封装 ──
+async function api(path, opts = {}) {
+  const headers = { 'Content-Type': 'application/json', ...(opts.headers || {}) };
+  if (S.token) headers['Authorization'] = 'Bearer ' + S.token;
+  const url = API_BASE + '/api' + path;
+  const res = await fetch(url, { ...opts, headers });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.message || '请求失败');
+  return data;
+}
+
+// ── 认证 ──
+async function doLogin() {
+  const u = document.getElementById('loginUser').value.trim();
+  const p = document.getElementById('loginPass').value;
+  const errEl = document.getElementById('loginError');
+  errEl.textContent = '';
+  if (!u || !p) { errEl.textContent = '请填写用户名和密码'; return; }
+  try {
+    const r = await api('/token/login.php', { method: 'POST', body: JSON.stringify({ username: u, password: p }) });
+    S.token = r.token;
+    S.user = { id: r.user_id, username: r.username, role: r.role };
+    localStorage.setItem('lc_token', r.token);
+    localStorage.setItem('lc_username', r.username);
+    await initApp();
+    showPage('chat');
+  } catch (e) { errEl.textContent = e.message; }
+}
+
+async function doRegister() {
+  const u = document.getElementById('regUser').value.trim();
+  const p = document.getElementById('regPass').value;
+  const em = document.getElementById('regEmail').value.trim();
+  const errEl = document.getElementById('regError');
+  errEl.textContent = '';
+  if (!u || !p) { errEl.textContent = '请填写用户名和密码'; return; }
+  if (p.length < 6) { errEl.textContent = '密码至少6位'; return; }
+  try {
+    const r = await api('/token/register.php', { method: 'POST', body: JSON.stringify({ username: u, password: p, email: em }) });
+    S.token = r.token;
+    S.user = { id: r.user_id, username: r.username, role: 'member' };
+    localStorage.setItem('lc_token', r.token);
+    localStorage.setItem('lc_username', r.username);
+    await initApp();
+    showPage('chat');
+  } catch (e) { errEl.textContent = e.message; }
+}
+
+function doLogout() {
+  S.token = null; S.user = null;
+  localStorage.removeItem('lc_token');
+  localStorage.removeItem('lc_username');
+  stopPolling();
+  document.getElementById('chat_list').innerHTML = '';
+  document.getElementById('box').innerHTML = '';
+  showPage('login');
+}
+
+// ── 初始化 ──
+async function initApp() {
+  try {
+    // 频道列表
+    const chData = await api('/channels/list.php');
+    S.channels = chData.channels || [];
+    S.joinedIds = new Set();
+    S.channels.forEach(ch => { if (ch.is_joined) S.joinedIds.add(ch.id); });
+
+    // 私聊列表
+    try {
+      const pvData = await api('/private/list.php');
+      S.privateChats = pvData.chats || [];
+    } catch (e) { S.privateChats = []; }
+
+    // 所有用户
+    try {
+      const userData = await api('/users/list.php');
+      S.users = userData.users || [];
+      S.users.forEach(u => {
+        S.userCache.set(u.id, { username: u.username, avatar: u.avatar, nickname: u.nickname });
+      });
+    } catch (e) { S.users = []; }
+
+    renderChatList();
+  } catch (e) { console.error('initApp error', e); }
+}
+
+// ── 渲染聊天列表 ──
+function renderChatList() {
+  const list = document.getElementById('chat_list');
+  let html = '';
+
+  // 频道
+  if (S.channels.length > 0) {
+    html += '<div style="padding:8px 12px;color:#888;font-size:12px;text-transform:uppercase">频道</div>';
+    for (const ch of S.channels) {
+      const icon = ch.type === 'announcement' ? '📢' : '#';
+      const joined = S.joinedIds.has(ch.id);
+      html += '<div class="userlist" onclick="openChannel(' + ch.id + ')">' +
+        '<div class="head">' + icon + '</div>' +
+        '<div class="user-pre"><div class="name">' + esc(ch.display_name) + '</div>' +
+        '<div class="message-pre">' + (joined ? '已加入' : '未加入') + ' · ' + ch.member_count + '人</div></div>' +
+        (joined ? '<div class="read-pre read">✓</div>' : '<div class="read-pre unread">+</div>') +
+        '</div>';
+    }
+  }
+
+  // 私聊
+  if (S.privateChats.length > 0) {
+    html += '<div style="padding:8px 12px;color:#888;font-size:12px;text-transform:uppercase;margin-top:8px">私聊</div>';
+    for (const pc of S.privateChats) {
+      html += '<div class="userlist" onclick="openPrivate(' + pc.id + ',' + pc.other_user_id + ',\'' + esc(pc.other_username) + '\')">' +
+        '<div class="head">' + avatarHTML(pc.other_user_id, pc.other_username) + '</div>' +
+        '<div class="user-pre"><div class="name">💬 ' + esc(pc.other_username) + '</div>' +
+        '<div class="message-pre">' + esc(pc.last_message || '') + '</div></div>' +
+        (pc.unread_count > 0 ? '<div class="read-pre unread">' + pc.unread_count + '</div>' : '<div class="read-pre read"></div>') +
+        '</div>';
+    }
+  }
+
+  // 所有用户（可发起新私聊）
+  if (S.users.length > 0) {
+    html += '<div style="padding:8px 12px;color:#888;font-size:12px;text-transform:uppercase;margin-top:8px">所有用户</div>';
+    for (const u of S.users) {
+      if (u.id === S.user.id) continue; // 跳过自己
+      html += '<div class="userlist" onclick="startPrivate(' + u.id + ',\'' + esc(u.username) + '\')">' +
+        '<div class="head">' + avatarHTML(u.id, u.username) + '</div>' +
+        '<div class="user-pre"><div class="name">' + esc(u.nickname || u.username) + '</div>' +
+        '<div class="message-pre">' + esc(u.role || '') + '</div></div>' +
+        '</div>';
+    }
+  }
+
+  if (!html) html = '<div style="padding:20px;text-align:center;color:#888">没有聊天，请先加入频道</div>';
+  list.innerHTML = html;
+}
+
+function avatarHTML(uid, name) {
+  if (!name) name = '?';
+  return '<span style="background:#333;width:44px;height:44px;border-radius:22px;display:inline-flex;align-items:center;justify-content:center;font-weight:600;color:#999">' + esc(name.charAt(0).toUpperCase()) + '</span>';
+}
+
+// ── 打开对话 ──
+async function openChannel(id) {
+  const ch = S.channels.find(c => c.id === id);
+  if (!ch) return;
+  S.activeChat = { id, type: 'channel', name: ch.display_name, joined: S.joinedIds.has(id) };
+  document.getElementById('chatboxTitle').textContent = '# ' + ch.display_name;
+  showPage('chatbox');
+  await loadHistory();
+}
+
+async function openPrivate(chatId, otherUserId, otherName) {
+  S.activeChat = { id: chatId, type: 'private', name: otherName, otherUserId };
+  document.getElementById('chatboxTitle').textContent = '💬 ' + otherName;
+  showPage('chatbox');
+  await loadHistory();
+}
+
+async function startPrivate(uid, name) {
+  // 先发送一条轻消息建立会话
+  try {
+    await api('/private/send.php', { method: 'POST', body: JSON.stringify({ to_user_id: uid, content: '👋 你好！' }) });
+    await initApp();
+    // 找到新会话
+    const pc = S.privateChats.find(c => c.other_user_id === uid);
+    if (pc) {
+      await openPrivate(pc.id, uid, name);
+    }
+  } catch (e) { alert('发起私聊失败: ' + e.message); }
+}
+
+// ── 加载历史消息 ──
+async function loadHistory() {
+  if (!S.activeChat) return;
+  const box = document.getElementById('box');
+  box.innerHTML = '';
+  S.messages = [];
+  S.lastMsgTime = 0;
+
+  try {
+    let msgs;
+    if (S.activeChat.type === 'channel') {
+      const r = await api('/messages/history.php?channel_id=' + S.activeChat.id + '&limit=100');
+      msgs = r.messages || [];
+    } else {
+      const r = await api('/private/history.php?chat_id=' + S.activeChat.id + '&limit=100');
+      msgs = r.messages || [];
+    }
+
+    S.messages = msgs;
+    if (msgs.length > 0) S.lastPollId = msgs[msgs.length - 1].id;
+    renderMessages();
+    startPolling();
+  } catch (e) { console.error('loadHistory', e); }
+}
+
+// ── 渲染消息 ──
+function renderMessages() {
+  const box = document.getElementById('box');
+  const inputBar = document.getElementById('inputBar');
+
+  if (!S.activeChat) return;
+
+  const joinBtn = document.getElementById('joinBtn');
+  const isUnjoinedChannel = S.activeChat.type === 'channel' && !S.activeChat.joined;
+
+  // 未加入频道：显示加入按钮，隐藏输入框
+  if (isUnjoinedChannel) {
+    inputBar.style.display = 'none';
+    joinBtn.style.display = '';
+  } else {
+    inputBar.style.display = 'flex';
+    joinBtn.style.display = 'none';
+  }
+
+  box.innerHTML = '';
+  const uid = S.user ? S.user.id : 0;
+
+  for (const m of S.messages) {
+    const isSelf = m.user_id === uid || m.from_user_id === uid;
+
+    if (m.type === 'system') {
+      box.innerHTML += '<div class="system-message-text">' + esc(m.content) + '</div>';
+      continue;
+    }
+
+    // 时间分隔（超过3分钟显示）
+    const ts = parseTime(m.created_at);
+    if (ts && S.lastMsgTime > 0 && (ts - S.lastMsgTime) > 180000) {
+      box.innerHTML += '<div class="system-message-text">' + formatTimestamp(ts) + '</div>';
+    }
+    if (ts) S.lastMsgTime = ts;
+
+    const senderName = m.username || ('用户' + (m.user_id || m.from_user_id));
+
+    box.innerHTML += '<div class="message-group">' +
+      (isSelf ? '' : '<div class="message-sender-name">' + esc(senderName) + '</div>') +
+      '<div class="message-text' + (isSelf ? ' selfmessage' : '') + '">' +
+      esc(m.content || '') +
+      (m.file_url ? renderFileAttachment(m) : '') +
+      '</div></div>';
+  }
+
+  requestAnimationFrame(() => { box.scrollTop = box.scrollHeight; });
+}
+
+function renderFileAttachment(m) {
+  const fullUrl = (m.file_url || '').startsWith('http') ? m.file_url : (API_BASE + (m.file_url || ''));
+  if (/\.(jpg|jpeg|png|gif|webp)$/i.test(m.file_url || '')) {
+    return '<br><img src="' + fullUrl + '" alt="" style="max-height:150px;border-radius:8px;cursor:pointer" onclick="showImg(\'' + fullUrl + '\')">';
+  }
+  return '<br><a href="' + fullUrl + '" target="_blank" style="color:#4a90e2;font-size:13px">📎 ' + (m.file_size ? formatSize(m.file_size) : '文件') + '</a>';
+}
+
+// ── 发送消息 ──
+async function sendMsg() {
+  if (!S.activeChat) return;
+  const input = document.getElementById('msg');
+  const text = input.value.trim();
+  if (!text) return;
+  input.value = '';
+
+  try {
+    if (S.activeChat.type === 'channel') {
+      await api('/messages/send.php', { method: 'POST', body: JSON.stringify({ channel_id: S.activeChat.id, content: text }) });
+    } else {
+      const r = await api('/private/send.php', { method: 'POST', body: JSON.stringify({ to_user_id: S.activeChat.otherUserId, content: text }) });
+      // 更新 chat_id
+      if (r.chat_id) S.activeChat.id = r.chat_id;
+    }
+    await loadHistory();
+  } catch (e) { alert('发送失败: ' + e.message); }
+}
+
+// ── 加入当前频道 ──
+async function joinCurrentChannel() {
+  if (!S.activeChat || S.activeChat.type !== 'channel') return;
+  try {
+    await api('/channels/join.php', { method: 'POST', body: JSON.stringify({ channel_id: S.activeChat.id }) });
+    S.activeChat.joined = true;
+    S.joinedIds.add(S.activeChat.id);
+    document.getElementById('inputBar').style.display = 'flex';
+    document.getElementById('joinBtn').style.display = 'none';
+    await loadHistory();
+  } catch (e) { alert('加入失败: ' + e.message); }
+}
+
+// ── 轮询 ──
+function startPolling() {
+  stopPolling();
+  poll();
+}
+
+function stopPolling() {
+  if (S.pollTimer) { clearTimeout(S.pollTimer); S.pollTimer = null; }
+}
+
+async function poll() {
+  if (!S.activeChat || !S.token) { S.pollTimer = setTimeout(poll, S.pollInterval); return; }
+  try {
+    let url, res;
+    if (S.activeChat.type === 'channel') {
+      url = API_BASE + '/api/messages/poll.php?channels=' + S.activeChat.id + '&since_id=' + S.lastPollId + '&timeout=10';
+    } else {
+      url = API_BASE + '/api/messages/poll.php?private_chat_id=' + S.activeChat.id + '&since_id=' + S.lastPollId + '&timeout=10';
+    }
+    const headers = { 'Authorization': 'Bearer ' + S.token };
+    res = await fetch(url, { headers });
+    const data = await res.json();
+    if (data.messages && data.messages.length > 0) {
+      const existingIds = new Set(S.messages.map(m => m.id));
+      for (const m of data.messages) {
+        if (!existingIds.has(m.id)) { S.messages.push(m); existingIds.add(m.id); }
+      }
+      S.lastPollId = data.latest_id || S.lastPollId;
+      renderMessages();
+    }
+  } catch (e) { /* 静默 */ }
+  S.pollTimer = setTimeout(poll, S.pollInterval);
+}
+
+// ── 刷新 ──
+async function refreshChats() {
+  await initApp();
+}
+
+// ── 页面导航 ──
+function showPage(id) {
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  const target = document.getElementById(id);
+  if (target) target.classList.add('active');
+  stopPolling();
+}
+
+function goBack() {
+  stopPolling();
+  showPage('chat');
+  initApp(); // 刷新列表，更新未读数等
+}
+
+function showSettings() {
+  document.getElementById('apiBaseSetting').value = API_BASE;
+  showPage('settings');
+}
+
+// ── 设置 ──
+function setScale(v) {
+  const root = document.getElementById('scaleRoot');
+  if (root) { root.style.zoom = v + '%'; localStorage.setItem('watch_scale', v); }
+}
+function setPollInterval(v) {
+  S.pollInterval = parseInt(v) * 1000;
+  if (S.pollTimer) { stopPolling(); startPolling(); }
+}
+
+// 设置保存（API 地址变更时触发）
+document.addEventListener('DOMContentLoaded', () => {
+  const apiInput = document.getElementById('apiBaseSetting');
+  if (apiInput) {
+    apiInput.onchange = function() {
+      API_BASE = this.value.trim();
+      localStorage.setItem('lc_api_base', API_BASE);
+    };
+  }
+  // 登录页回车
+  const passInput = document.getElementById('loginPass');
+  if (passInput) passInput.onkeydown = e => { if (e.key === 'Enter') doLogin(); };
+  // 聊天页回车
+  const msgInput = document.getElementById('msg');
+  if (msgInput) msgInput.onkeydown = e => { if (e.key === 'Enter') sendMsg(); };
+});
+
+// ── 工具函数 ──
+function esc(s) { if (!s) return ''; const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+function formatSize(b) { if (!b) return '0B'; const u = ['B','KB','MB','GB']; let i=0, s=b; while(s>=1024&&i<3){s/=1024;i++;} return s.toFixed(1)+' '+u[i]; }
+function showImg(url) { document.getElementById('imgViewerImg').src = url; document.getElementById('imgViewer').style.display = 'block'; }
+function hideImg() { document.getElementById('imgViewer').style.display = 'none'; }
+
+function parseTime(t) {
+  if (!t) return 0;
+  // "2026-05-28 08:00:00" → timestamp
+  const ms = Date.parse(t.replace(' ', 'T') + '+08:00');
+  return isNaN(ms) ? 0 : ms;
+}
+
+function formatTimestamp(ts) {
+  const now = Date.now();
+  const d = new Date(ts);
+  const td = new Date();
+  const isToday = d.getFullYear() === td.getFullYear() && d.getMonth() === td.getMonth() && d.getDate() === td.getDate();
+  const yesterday = new Date(now - 86400000);
+  const isYesterday = d.getFullYear() === yesterday.getFullYear() && d.getMonth() === yesterday.getMonth() && d.getDate() === yesterday.getDate();
+  const hh = String(d.getHours()).padStart(2,'0'), mm = String(d.getMinutes()).padStart(2,'0'), time = hh+':'+mm;
+  if (isToday) return '今天 ' + time;
+  if (isYesterday) return '昨天 ' + time;
+  if (d.getFullYear() === td.getFullYear()) return String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0')+' '+time;
+  return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0')+' '+time;
+}
+
+// ── 启动 ──
+window.onload = function() {
+  // 恢复缩放
+  const savedScale = localStorage.getItem('watch_scale');
+  if (savedScale) setScale(savedScale);
+
+  // 尝试自动登录
+  const savedToken = localStorage.getItem('lc_token');
+  if (savedToken) {
+    S.token = savedToken;
+    api('/users/profile.php').then(r => {
+      S.user = r.user;
+      initApp().then(() => showPage('chat'));
+    }).catch(() => {
+      S.token = null;
+      localStorage.removeItem('lc_token');
+      showPage('login');
+    });
+  } else {
+    showPage('login');
+  }
+};
+</script>
+</body>
+</html>
