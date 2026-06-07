@@ -151,6 +151,32 @@ if (!@move_uploaded_file($file['tmp_name'], $destPath)) {
     json_response(500, ['error' => 'save_failed', 'message' => '文件保存失败，请检查目录权限']);
 }
 
+// ── 内容去重（方案2：MD5 哈希比对）──
+$fileHash = md5_file($destPath);
+
+// 查找是否已有相同内容的文件
+$existing = null;
+try {
+    $existing = $db->get('uploads', ['file_hash' => $fileHash]);
+} catch (Exception $e) {
+    // 旧表可能没有 file_hash 列（LocalDriver 自动兼容），忽略异常
+}
+
+if ($existing && isset($existing['id'])) {
+    // 内容重复 → 删掉刚上传的文件，复用已有记录
+    @unlink($destPath);
+    json_response(200, [
+        'success'   => true,
+        'file_id'   => (int)$existing['id'],
+        'file_url'  => $existing['file_path'] ?? '',
+        'file_name' => $file['name'],
+        'file_size' => (int)($existing['file_size'] ?? $file['size']),
+        'file_type' => $existing['file_type'] ?? $category,
+        'mime_type' => $existing['mime_type'] ?? $mimeType,
+        'duplicate' => true,
+    ]);
+}
+
 // ── 记录到数据库 ──
 try {
     $fileId = $db->insert('uploads', [
@@ -160,6 +186,7 @@ try {
         'file_size' => $file['size'],
         'file_type' => $category,
         'mime_type' => $mimeType,
+        'file_hash' => $fileHash,
     ]);
 } catch (Exception $e) {
     @unlink($destPath);

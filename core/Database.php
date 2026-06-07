@@ -170,6 +170,7 @@ class Database {
                 file_size INTEGER,
                 file_type VARCHAR(50),
                 mime_type VARCHAR(100),
+                file_hash VARCHAR(32),
                 message_id INTEGER,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
