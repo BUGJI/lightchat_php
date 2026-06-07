@@ -90,7 +90,10 @@ foreach ($filtered as $msg) {
         'to_user_id'   => (int)$msg['to_user_id'],
         'username'     => $sender ? $sender['username'] : '未知用户',
         'avatar'       => $sender ? $sender['avatar'] : null,
+        'type'         => $msg['type'] ?? 'text',
         'content'      => $msg['content'] ?? '',
+        'file_url'     => $msg['file_url'] ?? null,
+        'file_size'    => $msg['file_size'] ?? 0,
         'is_read'      => isset($msg['is_read']) ? (int)$msg['is_read'] : 0,
         'created_at'   => $msg['created_at'] ?? '',
     ];

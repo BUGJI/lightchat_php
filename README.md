@@ -49,7 +49,15 @@ Lightchat/
 | 私聊 | `GET/POST /api/private/list.php` `send.php` `history.php` |
 | 用户 | `GET/POST /api/users/profile.php` `search.php` `list.php` |
 | 文件 | `POST /api/files/upload.php` |
-| 管理 | `GET /api/admin/audit.php` `export.php` `server/status.php` |
+| 管理 | `GET/POST /api/admin/audit.php` `export.php` `/api/server/status.php` |
+| Bot | `POST /api/bot/create.php` `GET/POST /api/bot/list.php` |
+
+## Bot 接入
+
+1. 管理员调用 `POST /api/bot/create.php` 创建 Bot，获得永久 `api_key`
+2. Bot 请求时在 Header 加 `X-Bot-Key: bot_xxxx...`
+3. 认证通过后 Bot 和普通用户一样调用消息、频道等全部 API
+4. 管理员可随时禁用/启用/重新生成 Key
 
 ## 客户端 API 地址配置
 

@@ -54,6 +54,7 @@ return [
                     'user.message.delete' => true,     // 删除自己的消息
                     'channel.create' => true,          // 创建频道
                     'channel.manage' => true,          // 管理自己创建的频道
+                    'user.bot.register' => true,       // 自助注册 Bot
                 ],
                 'rate_limit' => 30,
                 'message_rate' => 20,                  // 每分钟最多发送20条消息
@@ -83,6 +84,9 @@ return [
                     'admin.channel.delete' => true,    // 删除任何频道
                     'admin.channel.set_announcement' => true,  // 设置频道公告
                     'admin.system.config' => true,     // 修改系统配置
+                    'admin.bot.create' => true,        // 创建 Bot
+                    'admin.bot.manage' => true,        // 管理 Bot（启禁/删/重生成Key）
+                    'admin.bot.delete' => true,        // 删除 Bot
                 ],
                 'rate_limit' => 120,
                 'message_rate' => 60,
@@ -102,6 +106,13 @@ return [
             'max_length' => 20,
             'pattern' => '/^[a-zA-Z0-9_\x{4e00}-\x{9fa5}]+$/u',  // 字母数字下划线中文
             'reserved' => ['admin', 'system', 'robot', 'anonymous'],  // 保留用户名
+        ],
+        
+        // ── Bot 配置 ──
+        'bot' => [
+            'allow_self_register' => true,        // 是否允许用户自助注册为 Bot（通过注册接口传 account_type=bot）
+            'max_per_user' => 5,                  // 每人最多自助注册的 Bot 数量
+            'key_prefix' => 'bot_',               // API Key 前缀
         ],
         
         // 会话配置

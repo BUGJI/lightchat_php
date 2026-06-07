@@ -115,7 +115,10 @@ while ($cycle <= $maxCycles) {
                     'from_user_id'  => (int)$pm['from_user_id'],
                     'username'      => $sender ? $sender['username'] : '未知用户',
                     'avatar'        => $sender ? $sender['avatar'] : null,
+                    'type'          => $pm['type'] ?? 'text',
                     'content'       => $pm['content'] ?? '',
+                    'file_url'      => $pm['file_url'] ?? null,
+                    'file_size'     => $pm['file_size'] ?? 0,
                     'is_read'       => isset($pm['is_read']) ? (int)$pm['is_read'] : 0,
                     'created_at'    => $pm['created_at'] ?? '',
                 ];

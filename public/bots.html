@@ -1,0 +1,351 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Bot 管理 - LightChat</title>
+<style>
+:root {
+  --bg: #f5f6fa; --card: #fff; --text: #333; --text2: #888;
+  --border: #e8e8e8; --primary: #1abc9c; --danger: #e74c3c;
+  --warn: #f39c12; --shadow: 0 2px 12px rgba(0,0,0,.06);
+}
+* { margin:0; padding:0; box-sizing:border-box; }
+body { font-family: -apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif; background: var(--bg); color: var(--text); min-height:100vh; }
+.header { background: linear-gradient(135deg, #2c3e50, #1abc9c); color:#fff; padding:20px 28px; display:flex; align-items:center; justify-content:space-between; box-shadow: var(--shadow); }
+.header h1 { font-size:22px; display:flex; align-items:center; gap:10px; }
+.header .user { font-size:13px; opacity:.8; }
+.header .logout { background:rgba(255,255,255,.15); color:#fff; border:1px solid rgba(255,255,255,.3); padding:6px 14px; border-radius:6px; cursor:pointer; font-size:13px; margin-left:8px; transition:.2s; }
+.header .logout:hover { background:rgba(255,255,255,.25); }
+.container { max-width:900px; margin:24px auto; padding:0 20px; }
+.toolbar { display:flex; gap:10px; margin-bottom:16px; align-items:center; flex-wrap:wrap; }
+.toolbar input { padding:8px 14px; border:1px solid var(--border); border-radius:8px; font-size:14px; width:200px; }
+.toolbar input:focus { border-color:var(--primary); outline:none; }
+.btn { padding:8px 18px; border:none; border-radius:8px; font-size:14px; cursor:pointer; transition:.2s; font-weight:500; }
+.btn-primary { background:var(--primary); color:#fff; }
+.btn-primary:hover { background:#16a085; }
+.btn-sm { padding:5px 12px; font-size:12px; border-radius:6px; }
+.btn-danger { background:var(--danger); color:#fff; }
+.btn-danger:hover { opacity:.85; }
+.btn-outline { background:transparent; border:1px solid var(--border); }
+.btn-outline:hover { background:#f0f0f0; }
+.bot-card { background:var(--card); border-radius:12px; padding:20px; margin-bottom:12px; box-shadow: var(--shadow); display:flex; align-items:center; gap:16px; transition:.2s; flex-wrap:wrap; }
+.bot-card:hover { box-shadow:0 4px 20px rgba(0,0,0,.1); }
+.bot-avatar { width:48px; height:48px; border-radius:50%; background: linear-gradient(135deg, #2c3e50, #34495e); color:#fff; display:flex; align-items:center; justify-content:center; font-size:20px; flex-shrink:0; }
+.bot-info { flex:1; min-width:150px; }
+.bot-info .name { font-size:16px; font-weight:600; display:flex; align-items:center; gap:8px; }
+.bot-info .meta { font-size:12px; color:var(--text2); margin-top:2px; }
+.bot-status { display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:4px; }
+.bot-status.online { background:var(--primary); }
+.bot-status.offline { background:var(--danger); }
+.bot-actions { display:flex; gap:6px; flex-wrap:wrap; }
+.modal-overlay { position:fixed; top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;z-index:100; }
+.modal { background:var(--card); border-radius:12px; padding:28px; width:90%; max-width:440px; box-shadow:0 8px 40px rgba(0,0,0,.15); }
+.modal h3 { margin-bottom:16px; }
+.modal .form-group { margin-bottom:14px; }
+.modal label { display:block; margin-bottom:4px; font-size:13px; color:#555; }
+.modal input, .modal select { width:100%; padding:10px 12px; border:1px solid var(--border); border-radius:8px; font-size:14px; }
+.modal input:focus { border-color:var(--primary); outline:none; }
+.modal .btn-row { display:flex; gap:8px; justify-content:flex-end; margin-top:20px; }
+.modal .error { color:var(--danger); font-size:13px; min-height:20px; margin-top:4px; }
+.api-settings { display:flex; align-items:center; gap:8px; padding:8px 0; font-size:13px; color:var(--text2); }
+.api-settings input { flex:1; }
+.empty { text-align:center; padding:60px 20px; color:var(--text2); }
+.empty .icon { font-size:48px; margin-bottom:12px; }
+.toast { position:fixed; bottom:24px; left:50%; transform:translateX(-50%); background:#333; color:#fff; padding:10px 24px; border-radius:8px; font-size:14px; z-index:200; animation:fadeIn .3s; }
+@keyframes fadeIn { from{opacity:0;transform:translateX(-50%) translateY(10px)} to{opacity:1;transform:translateX(-50%) translateY(0)} }
+@media (max-width:600px) { .bot-card { flex-direction:column; align-items:flex-start; } .toolbar { flex-direction:column; } .toolbar input { width:100%; } }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>🤖 Bot 管理</h1>
+  <div>
+    <span class="user" id="headerUser"></span>
+    <button class="logout" onclick="logout()">退出</button>
+  </div>
+</div>
+
+<div class="container">
+  <!-- API 设置 -->
+  <div class="api-settings">
+    <span>API 地址</span>
+    <input id="apiBase" placeholder="留空=同源，如 http://host/Lightchat">
+    <button class="btn btn-sm btn-outline" onclick="saveApiBase()">保存</button>
+  </div>
+
+  <!-- 工具栏 -->
+  <div class="toolbar">
+    <button class="btn btn-primary" onclick="showCreateModal()">＋ 新建 Bot</button>
+    <button class="btn btn-outline btn-sm" onclick="loadBots()">🔄 刷新</button>
+  </div>
+
+  <!-- Bot 列表 -->
+  <div id="botList"></div>
+</div>
+
+<!-- 新建 Bot 弹窗 -->
+<div class="modal-overlay" id="createModal" style="display:none">
+  <div class="modal">
+    <h3>＋ 新建 Bot</h3>
+    <div class="form-group">
+      <label>Bot 用户名（自动加 bot_ 前缀）</label>
+      <input id="newBotUser" placeholder="如: weather">
+    </div>
+    <div class="form-group">
+      <label>Bot 名称 / 描述</label>
+      <input id="newBotName" placeholder="如: 天气预报机器人">
+    </div>
+    <div class="error" id="createError"></div>
+    <div class="btn-row">
+      <button class="btn btn-outline" onclick="hideCreateModal()">取消</button>
+      <button class="btn btn-primary" onclick="doCreateBot()">创建</button>
+    </div>
+  </div>
+</div>
+
+<!-- 频道管理弹窗 -->
+<div class="modal-overlay" id="channelModal" style="display:none">
+  <div class="modal">
+    <h3 id="channelModalTitle">⚙️ 频道管理</h3>
+    <div id="channelList"></div>
+    <div class="btn-row">
+      <button class="btn btn-outline" onclick="hideChannelModal()">关闭</button>
+    </div>
+  </div>
+</div>
+
+<!-- Key 展示弹窗（持久，手动关闭） -->
+<div class="modal-overlay" id="keyModal" style="display:none">
+  <div class="modal" style="max-width:480px">
+    <h3 id="keyModalTitle">🔑 API Key</h3>
+    <p id="keyModalHint" style="font-size:13px;color:var(--text2);margin-bottom:12px">⚠️ 此 Key 仅显示一次，请立即复制并妥善保存。</p>
+    <div style="background:#1e272e;color:#0be881;padding:16px;border-radius:8px;word-break:break-all;font-family:monospace;font-size:14px;margin-bottom:8px;position:relative" id="keyModalText"></div>
+    <p style="font-size:12px;color:#888;margin-bottom:16px">Bot 用户名: <strong id="keyModalUser"></strong></p>
+    <div class="btn-row">
+      <button class="btn btn-outline btn-sm" onclick="copyKeyFromModal()">📋 复制到剪贴板</button>
+      <button class="btn btn-primary" onclick="hideKeyModal()">我已保存，关闭</button>
+    </div>
+  </div>
+</div>
+
+<script>
+let API_BASE = localStorage.getItem('lc_api_base') || '';
+let TOKEN = '';
+let ALL_CHANNELS = [];
+
+if (location.search) { const m = location.search.match(/[?&]api=([^&]+)/); if (m) { API_BASE = decodeURIComponent(m[1]); localStorage.setItem('lc_api_base', API_BASE); } }
+document.getElementById('apiBase').value = API_BASE;
+
+function saveApiBase() {
+  API_BASE = document.getElementById('apiBase').value.trim();
+  localStorage.setItem('lc_api_base', API_BASE);
+  toast('API 地址已保存');
+  loadBots();
+}
+
+function apiUrl(path) { return API_BASE + '/api' + path; }
+
+async function req(path, opts = {}) {
+  const headers = { 'Content-Type': 'application/json' };
+  if (TOKEN) headers['Authorization'] = 'Bearer ' + TOKEN;
+  const res = await fetch(apiUrl(path), { headers, ...opts });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.message || '请求失败');
+  return data;
+}
+
+async function get(path) { return req(path); }
+async function post(path, body) { return req(path, { method: 'POST', body: JSON.stringify(body) }); }
+
+function toast(msg) {
+  const el = document.createElement('div'); el.className = 'toast'; el.textContent = msg;
+  document.body.appendChild(el);
+  setTimeout(() => el.remove(), 2500);
+}
+
+// ── 认证 ──
+function checkAuth() {
+  TOKEN = localStorage.getItem('lc_token');
+  if (!TOKEN) { showLogin(); return; }
+  get('/users/profile.php').then(r => {
+    document.getElementById('headerUser').textContent = '👤 ' + r.user.username + ' (' + r.user.role + ')';
+    loadBots();
+    loadChannels();
+  }).catch(() => { localStorage.removeItem('lc_token'); showLogin(); });
+}
+
+function showLogin() {
+  document.getElementById('botList').innerHTML = `
+    <div class="empty">
+      <div class="icon">🔐</div>
+      <div>请先登录（需要管理员权限）</div>
+      <div style="margin-top:12px">
+        <button class="btn btn-primary" onclick="location.href='index.html'">前往登录 →</button>
+      </div>
+    </div>`;
+}
+
+function logout() { localStorage.removeItem('lc_token'); TOKEN = ''; checkAuth(); }
+
+// ── Bot 列表 ──
+async function loadBots() {
+  if (!TOKEN) return;
+  try {
+    const data = await get('/bot/list.php');
+    renderBots(data.bots || []);
+  } catch (e) {
+    document.getElementById('botList').innerHTML = `<div class="empty"><div class="icon">⚠️</div><div>${esc(e.message)}</div></div>`;
+  }
+}
+
+async function loadChannels() {
+  try {
+    const data = await get('/channels/list.php');
+    ALL_CHANNELS = data.channels || [];
+  } catch(e) {}
+}
+
+function renderBots(bots) {
+  const el = document.getElementById('botList');
+  if (bots.length === 0) {
+    el.innerHTML = '<div class="empty"><div class="icon">🤖</div><div>还没有 Bot，点击「新建 Bot」创建第一个</div></div>';
+    return;
+  }
+  el.innerHTML = bots.map(b => `
+    <div class="bot-card">
+      <div class="bot-avatar">${esc(b.username).charAt(0).toUpperCase()}</div>
+      <div class="bot-info">
+        <div class="name">
+          <span class="bot-status ${b.status === 1 ? 'online' : 'offline'}"></span>
+          ${esc(b.username)}
+          <span style="font-size:11px;padding:1px 6px;border-radius:4px;background:${b.status===1?'#e8f8f5':'#fdecea'};color:${b.status===1?'var(--primary)':'var(--danger)'}">${b.status===1?'启用':'已禁用'}</span>
+        </div>
+        <div class="meta">创建于 ${b.created_at || '-'} · 最近活跃 ${b.last_used_at || '从未'} · ${b.has_active_key ? '🔑 Key 有效' : '无有效 Key'}</div>
+      </div>
+      <div class="bot-actions">
+        <button class="btn btn-outline btn-sm" onclick="showChannels('${esc(b.username)}',${b.id})">📢 频道</button>
+        <button class="btn btn-outline btn-sm" onclick="regenerateKey(${b.id})">🔑 重生成</button>
+        <button class="btn ${b.status===1?'btn-danger':'btn-primary'} btn-sm" onclick="toggleBot(${b.id},${b.status})">${b.status===1?'禁用':'启用'}</button>
+      </div>
+    </div>
+  `).join('');
+}
+
+// ── 操作 ──
+async function doCreateBot() {
+  const u = document.getElementById('newBotUser').value.trim();
+  const n = document.getElementById('newBotName').value.trim();
+  const err = document.getElementById('createError');
+  if (!u) { err.textContent = '请填写 Bot 用户名'; return; }
+  try {
+    const r = await post('/bot/create.php', { username: u, name: n });
+    hideCreateModal();
+    showKeyModal('✅ Bot 创建成功', r.username, r.api_key);
+    loadBots();
+  } catch(e) { err.textContent = e.message; }
+}
+
+async function toggleBot(id, currentStatus) {
+  if (!confirm(`确定${currentStatus===1?'禁用':'启用'}该 Bot？`)) return;
+  try {
+    await post('/bot/list.php', { action: 'toggle', bot_id: id });
+    toast(currentStatus === 1 ? 'Bot 已禁用' : 'Bot 已启用');
+    loadBots();
+  } catch(e) { toast('操作失败: ' + e.message); }
+}
+
+async function regenerateKey(id) {
+  if (!confirm('确定重新生成 API Key？旧 Key 将立即失效。')) return;
+  try {
+    const r = await post('/bot/list.php', { action: 'regenerate', bot_id: id });
+    showKeyModal('🔑 Key 已重新生成', r.username || ('bot_' + id), r.api_key);
+    loadBots();
+  } catch(e) { toast('操作失败: ' + e.message); }
+}
+
+function hideChannelModal() { document.getElementById('channelModal').style.display = 'none'; }
+async function showChannels(botName, botId) {
+  document.getElementById('channelModalTitle').textContent = '📢 ' + botName + ' — 频道管理';
+  document.getElementById('channelModal').style.display = '';
+
+  // 获取 Bot 当前加入的频道
+  let joinedIds = new Set();
+  try {
+    // 通过 list all users 拿 bot 的 joined 状态（需要 token）
+    // 用 bot key 请求频道列表
+    const botData = await get('/bot/list.php?id=' + botId);
+    // 获取 bot 的 session 来模拟他的视角... 实际上比较麻烦
+    // 简化：列出所有频道，显示加入/退出按钮
+  } catch(e) {}
+
+  // 用 admin 身份获取 bot 加入的频道列表
+  try {
+    // 遍历所有频道，检查 bot 是否成员
+    const body = new FormData();
+    // 用另一种方式：直接获取所有频道成员
+    const chData = await get('/channels/list.php');
+    ALL_CHANNELS = chData.channels || [];
+  } catch(e) {}
+
+  let html = '';
+  for (const ch of ALL_CHANNELS) {
+    // 简单加入/退出按钮
+    html += `<div style="display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid #eee">
+      <span># ${esc(ch.display_name)} <span style="font-size:11px;color:#888">${ch.type === 'announcement' ? '(公告)' : ''}</span></span>
+      <div>
+        <button class="btn btn-outline btn-sm" onclick="joinChannelAsBot(${botId},${ch.id})">加入</button>
+      </div>
+    </div>`;
+  }
+  document.getElementById('channelList').innerHTML = html || '<div style="color:#888;padding:12px">无可用频道</div>';
+}
+
+async function joinChannelAsBot(botId, channelId) {
+  // 获取 bot key 然后用 bot 身份加入
+  try {
+    const botData = await get('/bot/list.php?id=' + botId);
+    if (!botData.keys || !botData.keys[0]) { toast('Bot 无有效 Key'); return; }
+    const botKey = botData.keys[0].api_key;
+    const headers = { 'Content-Type': 'application/json', 'X-Bot-Key': botKey };
+    const res = await fetch(apiUrl('/channels/join.php'), { method: 'POST', headers, body: JSON.stringify({ channel_id: channelId }) });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.message);
+    toast('✅ Bot 已加入频道');
+  } catch(e) { toast('加入失败: ' + e.message); }
+}
+
+// ── Key 展示弹窗（持久，用户手动关闭） ──
+function showKeyModal(title, username, key) {
+  document.getElementById('keyModalTitle').textContent = title;
+  document.getElementById('keyModalText').textContent = key;
+  document.getElementById('keyModalUser').textContent = username;
+  document.getElementById('keyModal').style.display = '';
+}
+function hideKeyModal() { document.getElementById('keyModal').style.display = 'none'; }
+function copyKeyFromModal() {
+  const text = document.getElementById('keyModalText').textContent;
+  navigator.clipboard.writeText(text).then(() => toast('📋 已复制到剪贴板'));
+}
+
+// ── 弹窗 ──
+function showCreateModal() {
+  document.getElementById('createModal').style.display = '';
+  document.getElementById('createError').textContent = '';
+  document.getElementById('newBotUser').value = '';
+  document.getElementById('newBotName').value = '';
+  document.getElementById('newBotUser').focus();
+}
+function hideCreateModal() { document.getElementById('createModal').style.display = 'none'; }
+
+function esc(s) { if (!s) return ''; const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+
+// 回车创建
+document.getElementById('newBotName').addEventListener('keydown', e => { if (e.key === 'Enter') doCreateBot(); });
+
+// ── 启动 ──
+checkAuth();
+</script>
+</body>
+</html>

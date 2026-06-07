@@ -64,6 +64,7 @@ class Database {
                 contact VARCHAR(100),
                 reg_ip VARCHAR(45),
                 avatar VARCHAR(255),
+                account_type VARCHAR(20) DEFAULT 'user',
                 role VARCHAR(20) DEFAULT 'member',
                 status TINYINT DEFAULT 1,
                 last_active_at TIMESTAMP,
@@ -198,6 +199,19 @@ class Database {
                 ip VARCHAR(45),
                 user_agent TEXT,
                 detail TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ");
+
+        // 创建 Bot 密钥表
+        $this->driver->execute("
+            CREATE TABLE IF NOT EXISTS bot_keys (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                api_key VARCHAR(64) UNIQUE NOT NULL,
+                name VARCHAR(100),
+                active TINYINT DEFAULT 1,
+                last_used_at TIMESTAMP,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         ");

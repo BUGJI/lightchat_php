@@ -123,14 +123,32 @@ try {
 // ── 创建用户 ──
 $passwordHash = password_hash($password, PASSWORD_BCRYPT);
 
+$accountType = trim($input['account_type'] ?? '');
+if ($accountType === 'bot') {
+    // 检查是否允许自助注册 Bot
+    $allowSelfRegister = isset($config['user']['bot']['allow_self_register'])
+        ? $config['user']['bot']['allow_self_register'] : false;
+    if (!$allowSelfRegister) {
+        json_response(403, ['error' => 'bot_register_disabled', 'message' => '暂不支持自助注册 Bot']);
+    }
+    // 检查用户是否有 bot 注册权限（虽然注册时还没登录，但我们用 config 控制）
+    // 检查每个普通用户最大 Bot 数量
+    $maxPerUser = isset($config['user']['bot']['max_per_user']) ? (int)$config['user']['bot']['max_per_user'] : 5;
+    $existingBotCount = 0;
+    // 注册时无当前用户，仅做配置级检查
+} elseif ($accountType !== '' && !in_array($accountType, ['user', 'bot'])) {
+    json_response(400, ['error' => 'invalid_account_type', 'message' => 'account_type 只能为 user 或 bot']);
+}
+
 $userData = [
-    'username' => $username,
-    'password' => $passwordHash,
-    'email'    => $email,
-    'contact'  => $contact,
-    'reg_ip'   => $_SERVER['REMOTE_ADDR'] ?? '',
-    'role'     => isset($config['user']['default_role']) ? $config['user']['default_role'] : 'member',
-    'status'   => 1,
+    'username'     => $username,
+    'password'     => $passwordHash,
+    'email'        => $email,
+    'contact'      => $contact,
+    'reg_ip'       => $_SERVER['REMOTE_ADDR'] ?? '',
+    'account_type' => $accountType ?: 'user',
+    'role'         => isset($config['user']['default_role']) ? $config['user']['default_role'] : 'member',
+    'status'       => 1,
 ];
 
 try {

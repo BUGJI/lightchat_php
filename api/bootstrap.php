@@ -172,19 +172,53 @@ function filter_sensitive_words($content) {
     return $content;
 }
 
+/**
+ * 从请求头中提取 Bot API Key
+ * @return string
+ */
+function get_bot_key() {
+    if (isset($_SERVER['HTTP_X_BOT_KEY'])) {
+        return trim($_SERVER['HTTP_X_BOT_KEY']);
+    }
+    if (function_exists('apache_request_headers')) {
+        $headers = apache_request_headers();
+        if (isset($headers['X-Bot-Key'])) {
+            return trim($headers['X-Bot-Key']);
+        }
+    }
+    return '';
+}
+
 // ════════════════════════════════════════════
 //  认证中间件
 // ════════════════════════════════════════════
 
 /**
- * 认证用户并返回用户数组（不含密码字段）
- * 未认证时直接输出 401 并终止
+ * 认证用户或 Bot 并返回用户数组（不含密码字段）
+ * 支持 Bearer Token 和 X-Bot-Key 两种方式
  *
  * @return array 用户数据
  */
 function authenticate() {
     global $db, $config;
 
+    // ── 先尝试 Bot Key ──
+    $botKey = get_bot_key();
+    if ($botKey !== '') {
+        $keyRow = $db->get('bot_keys', ['api_key' => $botKey]);
+        if ($keyRow && isset($keyRow['active']) && (int)$keyRow['active'] === 1) {
+            $user = $db->get('users', ['id' => $keyRow['user_id']]);
+            if ($user && isset($user['status']) && (int)$user['status'] === 1) {
+                // 更新最后使用时间
+                $db->update('bot_keys', ['last_used_at' => date('Y-m-d H:i:s')], ['id' => $keyRow['id']]);
+                unset($user['password']);
+                return $user;
+            }
+        }
+        json_response(401, ['error' => 'invalid_bot_key', 'message' => 'Bot Key 无效或已禁用']);
+    }
+
+    // ── 再尝试 Bearer Token ──
     $token = get_bearer_token();
     if ($token === '') {
         json_response(401, ['error' => 'unauthorized', 'message' => '请先登录']);

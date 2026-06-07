@@ -7,6 +7,8 @@
  * 请求体 JSON:
  *   to_user_id  int     接收方用户 ID
  *   content     string  消息内容
+ *   type        string  消息类型: text / image / file（默认 text）
+ *   file_id     int     关联的上传文件 ID（可选）
  *
  * 成功响应 201:
  *   message_id  int
@@ -30,6 +32,8 @@ if (!has_permission($user, 'user.message.send')) {
 $input    = get_json_input();
 $toUserId = isset($input['to_user_id']) ? (int)$input['to_user_id'] : 0;
 $content  = trim($input['content'] ?? '');
+$type     = trim($input['type'] ?? 'text');
+$fileId   = isset($input['file_id']) ? (int)$input['file_id'] : null;
 
 if ($toUserId <= 0) {
     json_response(400, ['error' => 'invalid_user', 'message' => '接收方用户 ID 无效']);
@@ -37,7 +41,8 @@ if ($toUserId <= 0) {
 if ($toUserId === $user['id']) {
     json_response(400, ['error' => 'self_message', 'message' => '不能给自己发私信']);
 }
-if ($content === '') {
+// 消息内容不得为空（除非是文件类消息）
+if ($content === '' && !in_array($type, ['image', 'file'])) {
     json_response(400, ['error' => 'empty_content', 'message' => '消息内容不能为空']);
 }
 
@@ -63,29 +68,52 @@ $chat = $db->get('private_chats', ['user1_id' => $u1, 'user2_id' => $u2]);
 
 $chatId = null;
 try {
+    // 生成 last_message 预览文本
+    $lastMsgPreview = $content;
+    if ($type === 'image') {
+        $lastMsgPreview = $content ?: '[图片]';
+    } elseif ($type === 'file') {
+        $lastMsgPreview = $content ?: '[文件]';
+    }
+
     if (!$chat) {
         $chatId = $db->insert('private_chats', [
             'user1_id'        => $u1,
             'user2_id'        => $u2,
-            'last_message'    => mb_substr($content, 0, 100, 'UTF-8'),
+            'last_message'    => mb_substr($lastMsgPreview, 0, 100, 'UTF-8'),
             'last_message_at' => date('Y-m-d H:i:s'),
         ]);
     } else {
         $chatId = (int)$chat['id'];
         $db->update('private_chats', [
-            'last_message'    => mb_substr($content, 0, 100, 'UTF-8'),
+            'last_message'    => mb_substr($lastMsgPreview, 0, 100, 'UTF-8'),
             'last_message_at' => date('Y-m-d H:i:s'),
         ], ['id' => $chatId]);
     }
 
-    // ── 存储私聊消息 ──
-    $messageId = $db->insert('private_messages', [
+    // ── 构建私聊消息数据 ──
+    $messageData = [
         'chat_id'      => $chatId,
         'from_user_id' => $user['id'],
         'to_user_id'   => $toUserId,
+        'type'         => $type,
         'content'      => $content,
         'is_read'      => 0,
-    ]);
+    ];
+
+    // 关联文件
+    if ($fileId !== null && $fileId > 0) {
+        $upload = $db->get('uploads', ['id' => $fileId, 'user_id' => $user['id']]);
+        if ($upload) {
+            $messageData['file_url']  = $upload['file_path'] ?? '';
+            $messageData['file_size'] = $upload['file_size'] ?? 0;
+            // 关联文件到消息
+            $db->update('uploads', ['message_id' => null], ['id' => $fileId]);
+        }
+    }
+
+    // ── 存储私聊消息 ──
+    $messageId = $db->insert('private_messages', $messageData);
 } catch (Exception $e) {
     json_response(500, ['error' => 'send_failed', 'message' => '私聊消息发送失败']);
 }

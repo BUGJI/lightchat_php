@@ -413,8 +413,8 @@ async function loadPrivateChats() {
   renderSidebar();
 }
 
-async function sendPrivateMsg(toUserId, content) {
-  const r = await post('/api/private/send.php', { to_user_id: toUserId, content });
+async function sendPrivateMsg(toUserId, content, type, fileId) {
+  const r = await post('/api/private/send.php', { to_user_id: toUserId, content, type: type || 'text', file_id: fileId || undefined });
   // 刷新私聊列表
   await loadPrivateChats();
   // 如果当前在这个私聊里，加载历史
@@ -459,9 +459,15 @@ async function sendMessage(content) {
   scrollToBottom();
 }
 
-async function sendFileMessage(fileId) {
-  if (!S.activeChat || S.activeChat.type !== 'channel') return;
-  await post('/api/messages/send.php', { channel_id: S.activeChat.id, content: '', type: 'image', file_id: fileId });
+async function sendFileMessage(fileId, fileType) {
+  if (!S.activeChat) return;
+  // 映射上传文件类型到消息类型: image 保留，其余统一为 file
+  const type = (fileType === 'image') ? 'image' : 'file';
+  if (S.activeChat.type === 'channel') {
+    await post('/api/messages/send.php', { channel_id: S.activeChat.id, content: '', type, file_id: fileId });
+  } else {
+    await sendPrivateMsg(S.activeChat.otherUserId, '', type, fileId);
+  }
   await loadMessages();
   scrollToBottom();
 }
@@ -726,7 +732,7 @@ function showAuth(mode) {
     (isLogin
       ? '<div style="display:flex;align-items:center;gap:6px;margin-bottom:14px;font-size:13px;color:#555"><input type="checkbox" id="authRemember" style="width:auto" ' + (savedEmail ? 'checked' : '') + '><label for="authRemember" style="margin:0;font-size:13px">记住我</label></div>'
       : '') +
-    '<div style="display:flex;align-items:center;gap:6px;margin-bottom:14px;font-size:13px;color:#555"><input type="checkbox" id="authAgree" style="width:auto"><label for="authAgree" style="margin:0;font-size:13px">我已阅读并同意 <a href="' + (API_BASE || '.') + '/terms/privacy.html" target="_blank" style="color:#1abc9c">隐私政策</a> 和 <a href="' + (API_BASE || '.') + '/terms/tos.html" target="_blank" style="color:#1abc9c">服务条款</a></label></div>' +
+    '<div style="display:flex;align-items:center;gap:6px;margin-bottom:14px;font-size:13px;color:#555"><input type="checkbox" id="authAgree" style="width:auto"' + (localStorage.getItem('lc_privacy_agreed') === '1' ? ' checked' : '') + '><label for="authAgree" style="margin:0;font-size:13px">我已阅读并同意 <a href="' + (API_BASE || '.') + '/terms/privacy.html" target="_blank" style="color:#1abc9c">隐私政策</a> 和 <a href="' + (API_BASE || '.') + '/terms/tos.html" target="_blank" style="color:#1abc9c">服务条款</a></label></div>' +
     '<button class="btn btn-primary" id="authSubmit">' + (isLogin ? '登录' : '注册') + '</button>' +
     '<button class="btn btn-text" id="authSwitch">' + (isLogin ? '还没有账号？去注册 →' : '已有账号？去登录 →') + '</button>' +
     '<div class="error" id="authError"></div>' +
@@ -739,6 +745,7 @@ function showAuth(mode) {
     errEl.textContent = '';
     if (!u || !p) { errEl.textContent = '请填写完整'; return; }
     if (!document.getElementById('authAgree').checked) { errEl.textContent = '请先同意隐私政策和服务条款'; return; }
+    localStorage.setItem('lc_privacy_agreed', document.getElementById('authAgree').checked ? '1' : '0');
     try {
       if (isLogin) {
         await doLogin(u, p, document.getElementById('authRemember')?.checked);
@@ -878,7 +885,7 @@ document.getElementById('fileInput').onchange = async function() {
   if (!file) return;
   try {
     const r = await uploadFile(file);
-    await sendFileMessage(r.file_id);
+    await sendFileMessage(r.file_id, r.file_type);
   } catch(e) { alert(e.message); }
   this.value = '';
 };
