@@ -123,6 +123,99 @@ if ($method === 'POST') {
         $updates['email'] = $email;
     }
 
+    // ── 用户名 ──
+    if (isset($input['username']) && $input['username'] !== '') {
+        $newUsername = trim($input['username']);
+        $usernameCfg = isset($config['user']['username']) ? $config['user']['username'] : [];
+        $minLen = isset($usernameCfg['min_length']) ? (int)$usernameCfg['min_length'] : 3;
+        $maxLen = isset($usernameCfg['max_length']) ? (int)$usernameCfg['max_length'] : 20;
+        $pattern = isset($usernameCfg['pattern']) ? $usernameCfg['pattern'] : '/^[a-zA-Z0-9_\x{4e00}-\x{9fa5}]+$/u';
+        $reserved = isset($usernameCfg['reserved']) ? $usernameCfg['reserved'] : ['admin', 'system', 'robot', 'anonymous'];
+
+        $len = mb_strlen($newUsername, 'UTF-8');
+        if ($len < $minLen || $len > $maxLen) {
+            json_response(400, ['error' => 'invalid_username', 'message' => "用户名需 {$minLen}-{$maxLen} 个字符"]);
+        }
+        if (!preg_match($pattern, $newUsername)) {
+            json_response(400, ['error' => 'invalid_username', 'message' => '用户名包含非法字符']);
+        }
+        if (in_array(strtolower($newUsername), array_map('strtolower', $reserved))) {
+            json_response(400, ['error' => 'reserved_username', 'message' => '该用户名为系统保留']);
+        }
+        if ($newUsername !== $user['username']) {
+            $existing = $db->get('users', ['username' => $newUsername]);
+            if ($existing) {
+                json_response(409, ['error' => 'duplicate_username', 'message' => '用户名已被占用']);
+            }
+        }
+        $updates['username'] = $newUsername;
+    }
+
+    // ── 密码 ──
+    if (isset($input['new_password']) && $input['new_password'] !== '') {
+        $oldPassword = isset($input['old_password']) ? $input['old_password'] : '';
+        $newPassword = $input['new_password'];
+
+        // 重新查询用户（authenticate 移除了 password 字段）
+        $userWithPass = $db->get('users', ['id' => $user['id']]);
+        if (!$userWithPass || !password_verify($oldPassword, $userWithPass['password'])) {
+            json_response(400, ['error' => 'wrong_password', 'message' => '旧密码不正确']);
+        }
+        if (strlen($newPassword) < 6) {
+            json_response(400, ['error' => 'password_too_short', 'message' => '新密码至少 6 个字符']);
+        }
+        $updates['password'] = password_hash($newPassword, PASSWORD_DEFAULT);
+    }
+
+    // ── 头像（Base64 Data URI） ──
+    if (isset($input['avatar']) && $input['avatar'] !== '') {
+        $avatarData = $input['avatar'];
+        if (preg_match('#^data:image/(\w+);base64,(.+)$#', $avatarData, $m)) {
+            $ext = strtolower($m[1]);
+            $ext = ($ext === 'jpeg') ? 'jpg' : $ext;
+            $raw = base64_decode($m[2]);
+            if ($raw === false) {
+                json_response(400, ['error' => 'invalid_avatar', 'message' => '头像数据解码失败']);
+            }
+            if (!in_array($ext, ['jpg', 'jpeg', 'png', 'gif', 'webp'])) {
+                json_response(400, ['error' => 'invalid_avatar', 'message' => '不支持的图片格式，仅支持 JPG/PNG/GIF/WebP']);
+            }
+            // 限制大小 1MB
+            if (strlen($raw) > 1024 * 1024) {
+                json_response(400, ['error' => 'avatar_too_large', 'message' => '头像图片不能超过 1MB']);
+            }
+
+            $storageCfg = isset($config['upload']['storage']) ? $config['upload']['storage'] : [];
+            $uploadDir  = isset($storageCfg['local_path']) ? rtrim($storageCfg['local_path'], '/') : (__DIR__ . '/../../uploads');
+            $urlPrefix  = isset($storageCfg['url_prefix']) ? $storageCfg['url_prefix'] : '/uploads/';
+
+            if (!is_dir($uploadDir)) {
+                @mkdir($uploadDir, 0755, true);
+            }
+            if (!is_writable($uploadDir)) {
+                json_response(500, ['error' => 'dir_not_writable', 'message' => '上传目录不可写']);
+            }
+
+            $avatarName = 'avatar_' . $user['id'] . '_' . time() . '.' . $ext;
+            $destPath = $uploadDir . '/' . $avatarName;
+            if (@file_put_contents($destPath, $raw) === false) {
+                json_response(500, ['error' => 'avatar_save_failed', 'message' => '头像保存失败']);
+            }
+
+            // 删除旧头像文件（可选）
+            if (!empty($user['avatar'])) {
+                $oldPath = $uploadDir . '/' . basename($user['avatar']);
+                if (file_exists($oldPath) && strpos($user['avatar'], '/uploads/') !== false) {
+                    @unlink($oldPath);
+                }
+            }
+
+            $updates['avatar'] = $urlPrefix . $avatarName;
+        } else {
+            json_response(400, ['error' => 'invalid_avatar', 'message' => '头像数据格式不正确，需为 data:image/...;base64,...']);
+        }
+    }
+
     if (empty($updates)) {
         json_success([], '没有需要更新的字段');
     }

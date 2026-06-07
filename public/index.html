@@ -131,6 +131,8 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC'
 .modal .btn-row .btn-confirm { background:var(--primary); color:#fff; }
 .modal .btn-row .btn-confirm:hover { background:var(--primary-dark); }
 .modal .error { color:var(--danger); font-size:13px; min-height:20px; margin-top:4px; }
+#settingsAvatarWrap:hover { opacity:.85; }
+#settingsAvatarWrap img { width:100%; height:100%; object-fit:cover; border-radius:50%; }
 
 /* ── Mobile ── */
 @media (max-width:768px) {
@@ -219,15 +221,43 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC'
 
 <!-- ═══════════ Settings Modal ═══════════ -->
 <div class="modal-overlay" id="settingsModal" style="display:none">
-  <div class="modal">
-    <h3>⚙️ 设置</h3>
-    <div class="form-group">
-      <label>API 基础地址</label>
-      <input type="text" id="apiBaseInput" placeholder="留空使用同源地址（/api/...）">
-      <div style="font-size:11px;color:var(--text-light);margin-top:4px">例如: http://your-server.com/Lightchat</div>
+  <div class="modal" style="max-width:460px">
+    <h3>⚙️ 个人设置</h3>
+    <!-- Avatar -->
+    <div class="form-group" style="text-align:center">
+      <div class="avatar-upload" id="settingsAvatarWrap" style="cursor:pointer;display:inline-block;position:relative">
+        <div id="settingsAvatar" style="width:72px;height:72px;border-radius:50%;background:var(--primary);color:#fff;display:flex;align-items:center;justify-content:center;font-size:28px;font-weight:600;margin:0 auto;overflow:hidden">?</div>
+        <div style="position:absolute;bottom:0;right:0;width:24px;height:24px;border-radius:50%;background:#555;color:#fff;font-size:12px;display:flex;align-items:center;justify-content:center;border:2px solid #fff">📷</div>
+      </div>
+      <div style="font-size:11px;color:var(--text-light);margin-top:4px">点击更换头像</div>
+      <input type="file" id="settingsAvatarInput" accept="image/*" style="display:none">
     </div>
-    <div style="font-size:13px;color:var(--text-light);margin:8px 0 0">
-      当前用户: <strong id="settingsUsername"></strong> · 角色: <span id="settingsRole"></span>
+    <!-- Username -->
+    <div class="form-group">
+      <label>用户名</label>
+      <input type="text" id="settingsUsername" placeholder="3-20位，字母数字下划线中文">
+    </div>
+    <!-- Email -->
+    <div class="form-group">
+      <label>邮箱</label>
+      <input type="email" id="settingsEmail" placeholder="your@email.com">
+    </div>
+    <!-- Password -->
+    <div class="form-group">
+      <label>修改密码</label>
+      <input type="password" id="settingsOldPass" placeholder="旧密码（不改密码则留空）">
+      <input type="password" id="settingsNewPass" placeholder="新密码（至少6位）" style="margin-top:8px">
+    </div>
+    <!-- API Base -->
+    <details style="margin-bottom:14px">
+      <summary style="font-size:13px;color:var(--text-light);cursor:pointer">⚙️ API 地址（高级）</summary>
+      <input type="text" id="apiBaseInput" placeholder="留空使用同源地址" style="margin-top:8px">
+    </details>
+    <!-- Status -->
+    <div style="font-size:13px;text-align:center;min-height:20px" id="settingsStatus"></div>
+    <!-- Role info -->
+    <div style="font-size:12px;color:var(--text-light);text-align:center;margin-bottom:8px">
+      角色: <span id="settingsRole"></span>
     </div>
     <div class="btn-row">
       <button class="btn-cancel" id="settingsCancel">取消</button>
@@ -771,13 +801,112 @@ async function showApp() {
 }
 
 /* ── 模态框 ── */
+/* ── 设置面板 ── */
 function showSettings() {
   document.getElementById('settingsModal').style.display = '';
   document.getElementById('apiBaseInput').value = API_BASE;
-  document.getElementById('settingsUsername').textContent = S.user ? S.user.username : '';
   document.getElementById('settingsRole').textContent = S.user ? S.user.role : '';
+  document.getElementById('settingsStatus').textContent = '';
+  document.getElementById('settingsOldPass').value = '';
+  document.getElementById('settingsNewPass').value = '';
+  loadSettingsProfile();
 }
 function hideSettings() { document.getElementById('settingsModal').style.display = 'none'; }
+
+async function loadSettingsProfile() {
+  try {
+    const data = await get('/api/users/profile.php');
+    const u = data.user;
+    S.user = { ...S.user, ...u };
+    // Avatar
+    const av = document.getElementById('settingsAvatar');
+    if (u.avatar) {
+      const fullUrl = u.avatar.startsWith('http') ? u.avatar : (API_BASE + u.avatar);
+      av.innerHTML = '<img src="' + esc(fullUrl) + '" style="width:100%;height:100%;object-fit:cover">';
+    } else {
+      av.textContent = (u.username || '?').charAt(0).toUpperCase();
+    }
+    // Username
+    document.getElementById('settingsUsername').value = u.username || '';
+    // Email
+    document.getElementById('settingsEmail').value = u.email || '';
+    // Store original username for comparison
+    S._origUsername = u.username;
+  } catch(e) { /* 静默失败 */ }
+}
+
+// Avatar 上传
+let _avatarBase64 = null;
+document.getElementById('settingsAvatarWrap').onclick = () => document.getElementById('settingsAvatarInput').click();
+document.getElementById('settingsAvatarInput').onchange = function() {
+  const file = this.files[0];
+  if (!file) return;
+  if (file.size > 1024 * 1024) { alert('头像图片不能超过 1MB'); return; }
+  const reader = new FileReader();
+  reader.onload = function(e) {
+    _avatarBase64 = e.target.result;
+    const av = document.getElementById('settingsAvatar');
+    av.innerHTML = '<img src="' + esc(e.target.result) + '" style="width:100%;height:100%;object-fit:cover">';
+  };
+  reader.readAsDataURL(file);
+  this.value = '';
+};
+
+// 保存设置
+document.getElementById('settingsSave').onclick = async () => {
+  const status = document.getElementById('settingsStatus');
+  status.textContent = '';
+  status.style.color = '';
+  const body = {};
+
+  const username = document.getElementById('settingsUsername').value.trim();
+  if (username && username !== S._origUsername) body.username = username;
+
+  const email = document.getElementById('settingsEmail').value.trim();
+  if (email !== (S.user.email || '')) body.email = email;
+
+  const oldPass = document.getElementById('settingsOldPass').value;
+  const newPass = document.getElementById('settingsNewPass').value;
+  if (newPass) {
+    if (!oldPass) { status.textContent = '请输入旧密码'; status.style.color = 'var(--danger)'; return; }
+    if (newPass.length < 6) { status.textContent = '新密码至少 6 位'; status.style.color = 'var(--danger)'; return; }
+    body.old_password = oldPass;
+    body.new_password = newPass;
+  }
+
+  if (_avatarBase64) body.avatar = _avatarBase64;
+
+  // 始终保存 API 地址
+  const apiVal = document.getElementById('apiBaseInput').value.trim();
+  if (apiVal !== API_BASE) {
+    API_BASE = apiVal;
+    localStorage.setItem('lc_api_base', apiVal);
+  }
+
+  if (Object.keys(body).length === 0) {
+    status.textContent = '没有需要保存的更改';
+    status.style.color = 'var(--text-light)';
+    return;
+  }
+
+  try {
+    await post('/api/users/profile.php', body);
+    status.textContent = '✅ 保存成功';
+    status.style.color = 'var(--primary)';
+    _avatarBase64 = null;
+    S._origUsername = username || S._origUsername;
+    // 更新 sidebar 用户名
+    if (body.username) { S.user.username = body.username; renderSidebar(); }
+    // 清空密码框
+    document.getElementById('settingsOldPass').value = '';
+    document.getElementById('settingsNewPass').value = '';
+    // 刷新资料
+    setTimeout(() => loadSettingsProfile(), 600);
+  } catch(e) {
+    status.textContent = '❌ ' + e.message;
+    status.style.color = 'var(--danger)';
+  }
+};
 
 function showCreateChannel() {
   document.getElementById('createChannelModal').style.display = '';
@@ -805,14 +934,6 @@ function scrollToBottom() { const area = document.getElementById('messageArea');
 /* ── 事件绑定 ── */
 document.getElementById('settingsBtn').onclick = showSettings;
 document.getElementById('settingsCancel').onclick = hideSettings;
-document.getElementById('settingsSave').onclick = () => {
-  const val = document.getElementById('apiBaseInput').value.trim();
-  API_BASE = val;
-  localStorage.setItem('lc_api_base', val);
-  hideSettings();
-  // 重新加载
-  showApp();
-};
 document.getElementById('logoutBtn').onclick = () => { hideSettings(); logout(); };
 
 document.getElementById('createChannelBtn').onclick = showCreateChannel;
