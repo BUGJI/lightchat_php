@@ -101,6 +101,8 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC'
 .msg .file-attach { margin-top:4px; }
 .msg .file-attach a { color:var(--primary-dark); font-size:13px; }
 .msg .file-attach img { max-width:200px; max-height:200px; border-radius:8px; cursor:pointer; }
+#imgViewer{display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.95);z-index:9999;cursor:pointer}
+#imgViewerImg{max-width:90%;max-height:90%;position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);border-radius:12px;box-shadow:0 4px 30px rgba(0,0,0,.5);cursor:default;transition:transform .15s}
 
 .input-area { padding:12px 20px; background:#fff; border-top:1px solid var(--border); display:flex; gap:10px; align-items:flex-end; }
 .input-area textarea { flex:1; border:1px solid var(--border); border-radius:var(--radius); padding:10px 14px; font-size:14px; resize:none; min-height:42px; max-height:120px; font-family:inherit; transition:var(--transition); }
@@ -133,6 +135,15 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC'
 .modal .error { color:var(--danger); font-size:13px; min-height:20px; margin-top:4px; }
 #settingsAvatarWrap:hover { opacity:.85; }
 #settingsAvatarWrap img { width:100%; height:100%; object-fit:cover; border-radius:50%; }
+
+/* ── Notification Settings ── */
+.notif-row { display:flex; gap:8px; align-items:center; }
+.notif-row input { flex:1; }
+.notif-cond { display:none; margin-top:8px; padding:10px; background:#f8f9fa; border-radius:6px; border:1px solid #eee; }
+.notif-cond.show { display:block; }
+.notif-cond label { font-size:12px; color:#777; margin-bottom:4px; display:block; }
+.notif-cond input { width:100%; margin-bottom:0; }
+.notif-cond .hint { font-size:11px; color:#aaa; margin-top:3px; }
 
 /* ── Mobile ── */
 @media (max-width:768px) {
@@ -248,6 +259,34 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC'
       <input type="password" id="settingsOldPass" placeholder="旧密码（不改密码则留空）">
       <input type="password" id="settingsNewPass" placeholder="新密码（至少6位）" style="margin-top:8px">
     </div>
+    <!-- Notification Settings -->
+    <details style="margin-bottom:14px" id="notifDetails">
+      <summary style="font-size:13px;color:var(--text-light);cursor:pointer">🔔 通知设置</summary>
+      <div class="form-group" style="margin-top:8px">
+        <label>通知方式</label>
+        <select id="notifMode" onchange="toggleNotifFields()">
+          <option value="none">不提醒</option>
+          <option value="email">邮件通知</option>
+          <option value="pushplus">PushPlus</option>
+          <option value="webhook">Webhook</option>
+        </select>
+      </div>
+      <div class="notif-cond" id="notifEmailBlock">
+        <label>通知邮箱</label>
+        <input type="email" id="notifEmail" placeholder="your@email.com">
+      </div>
+      <div class="notif-cond" id="notifPushplusBlock">
+        <label>PushPlus Token</label>
+        <input type="text" id="notifPushplusKey" placeholder="推送密钥">
+      </div>
+      <div class="notif-cond" id="notifWebhookBlock">
+        <label>Webhook URL</label>
+        <input type="url" id="notifWebhookUrl" placeholder="https://your-server.com/webhook">
+        <div class="hint">收到离线消息时 POST JSON 到此地址</div>
+        <label style="margin-top:10px">签名密钥（可选）</label>
+        <input type="text" id="notifWebhookSecret" placeholder="可选，将附加 X-Webhook-Secret 头">
+      </div>
+    </details>
     <!-- API Base -->
     <details style="margin-bottom:14px">
       <summary style="font-size:13px;color:var(--text-light);cursor:pointer">⚙️ API 地址（高级）</summary>
@@ -312,6 +351,9 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC'
     </div>
   </div>
 </div>
+
+<!-- ═══ 图片查看器 ═══ -->
+<div id="imgViewer" onclick="hideImg()"><img id="imgViewerImg" src="" alt=""></div>
 
 <script>
 /* ════════════════════════════════════════════
@@ -665,7 +707,7 @@ function renderMessageList(msgs) {
       html += '<div class="file-attach">';
       const fullUrl = m.file_url.startsWith('http') ? m.file_url : (API_BASE + m.file_url);
       if (m.file_url.match(/\.(jpg|jpeg|png|gif|webp)$/i)) {
-        html += '<img src="' + fullUrl + '" alt="" loading="lazy">';
+        html += '<img src="' + fullUrl + '" alt="" loading="lazy" onclick="event.stopPropagation();showImg(this.src)">';
       } else {
         html += '<a href="' + fullUrl + '" target="_blank">📎 文件 (' + formatSize(m.file_size) + ')</a>';
       }
@@ -813,6 +855,40 @@ function showSettings() {
 }
 function hideSettings() { document.getElementById('settingsModal').style.display = 'none'; }
 
+function toggleNotifFields() {
+  const mode = document.getElementById('notifMode').value;
+  document.getElementById('notifEmailBlock').classList.toggle('show', mode === 'email');
+  document.getElementById('notifPushplusBlock').classList.toggle('show', mode === 'pushplus');
+  document.getElementById('notifWebhookBlock').classList.toggle('show', mode === 'webhook');
+}
+
+/* ── 图片查看器 ── */
+let _imgZoom = 1;
+function showImg(url) {
+  const viewer = document.getElementById('imgViewer');
+  const img = document.getElementById('imgViewerImg');
+  _imgZoom = 1; img.style.transform = 'translate(-50%,-50%) scale(1)';
+  img.src = url;
+  viewer.style.display = 'block';
+}
+function hideImg() {
+  document.getElementById('imgViewer').style.display = 'none';
+  _imgZoom = 1;
+}
+// 滚轮缩放
+document.getElementById('imgViewerImg').onwheel = function(e) {
+  e.preventDefault(); e.stopPropagation();
+  _imgZoom += e.deltaY < 0 ? 0.15 : -0.15;
+  _imgZoom = Math.max(0.2, Math.min(5, _imgZoom));
+  this.style.transform = 'translate(-50%,-50%) scale(' + _imgZoom + ')';
+};
+// 双击重置缩放
+document.getElementById('imgViewerImg').ondblclick = function(e) {
+  e.stopPropagation();
+  _imgZoom = 1;
+  this.style.transform = 'translate(-50%,-50%) scale(1)';
+};
+
 async function loadSettingsProfile() {
   try {
     const data = await get('/api/users/profile.php');
@@ -830,6 +906,14 @@ async function loadSettingsProfile() {
     document.getElementById('settingsUsername').value = u.username || '';
     // Email
     document.getElementById('settingsEmail').value = u.email || '';
+    // Notification settings
+    const notif = u.notification || {};
+    document.getElementById('notifMode').value = notif.mode || 'none';
+    document.getElementById('notifEmail').value = notif.email || '';
+    document.getElementById('notifPushplusKey').value = notif.pushplus_key || '';
+    document.getElementById('notifWebhookUrl').value = notif.webhook_url || '';
+    document.getElementById('notifWebhookSecret').value = notif.webhook_secret || '';
+    toggleNotifFields();
     // Store original username for comparison
     S._origUsername = u.username;
   } catch(e) { /* 静默失败 */ }
@@ -875,6 +959,27 @@ document.getElementById('settingsSave').onclick = async () => {
   }
 
   if (_avatarBase64) body.avatar = _avatarBase64;
+
+  // 通知设置
+  const notifMode = document.getElementById('notifMode').value;
+  if (notifMode !== 'none') {
+    body.notification_mode = notifMode;
+    if (notifMode === 'email') {
+      body.notification_email = document.getElementById('notifEmail').value.trim();
+    } else if (notifMode === 'pushplus') {
+      body.notification_pushplus_key = document.getElementById('notifPushplusKey').value.trim();
+    } else if (notifMode === 'webhook') {
+      body.notification_webhook_url = document.getElementById('notifWebhookUrl').value.trim();
+      const secret = document.getElementById('notifWebhookSecret').value.trim();
+      if (secret) body.notification_webhook_secret = secret;
+    }
+  } else {
+    body.notification_mode = 'none';
+    body.notification_email = '';
+    body.notification_pushplus_key = '';
+    body.notification_webhook_url = '';
+    body.notification_webhook_secret = '';
+  }
 
   // 始终保存 API 地址
   const apiVal = document.getElementById('apiBaseInput').value.trim();

@@ -8,10 +8,21 @@
  *
  * POST 请求体 JSON（可部分更新）:
  *   nickname  string  昵称
- *   avatar    string  头像 URL
+ *   avatar    string  头像 URL / Base64 Data URI
  *   bio       string  个人简介
  *   signature string  签名
  *   email     string  邮箱
+ *   
+ *   notification_mode         string  不提醒/邮件/PushPlus (none / email / pushplus)
+ *   notification_email         string  通知邮箱（选邮件时必填）
+ *   notification_pushplus_key  string  PushPlus 密钥（选 PushPlus 时必填）
+ *   notification_template      object  自定义通知模板（尖括号变量自动替换）
+ *     {
+ *       "email":    { "subject": "...", "body": "..." },
+ *       "pushplus": { "title": "...", "content": "..." }
+ *     }
+ *   模板可用变量: {nickname} {unread_count} {messages_preview}
+ *                {sender_name} {last_message_time}
  */
 
 require_once __DIR__ . '/../bootstrap.php';
@@ -63,6 +74,17 @@ if ($method === 'GET') {
             'status'     => (int)($user['status'] ?? 1),
             'created_at' => $user['created_at'] ?? '',
             'last_active_at' => $user['last_active_at'] ?? '',
+            // 通知设置
+            'notification' => [
+                'mode'          => $user['notification_mode'] ?? 'none',
+                'email'         => $user['notification_email'] ?? '',
+                'pushplus_key'  => $user['notification_pushplus_key'] ?? '',
+                'webhook_url'   => $user['notification_webhook_url'] ?? '',
+                'webhook_secret' => $user['notification_webhook_secret'] ?? '',
+                'template'      => $user['notification_template'] 
+                    ? json_decode($user['notification_template'], true) 
+                    : null,
+            ],
         ];
 
         json_success(['user' => $profile]);
@@ -214,6 +236,82 @@ if ($method === 'POST') {
         } else {
             json_response(400, ['error' => 'invalid_avatar', 'message' => '头像数据格式不正确，需为 data:image/...;base64,...']);
         }
+    }
+
+    // ── 通知设置 ──
+    $validModes = ['none', 'email', 'pushplus', 'webhook'];
+    if (isset($input['notification_mode'])) {
+        $mode = trim($input['notification_mode']);
+        if (!in_array($mode, $validModes, true)) {
+            json_response(400, ['error' => 'invalid_notification_mode', 'message' => '通知方式仅支持: none / email / pushplus / webhook']);
+        }
+        if ($mode === 'email' && empty($user['email']) && empty($input['notification_email'])) {
+            json_response(400, ['error' => 'missing_email', 'message' => '选择邮件通知时需填写邮箱']);
+        }
+        if ($mode === 'pushplus' && empty($input['notification_pushplus_key']) && empty($user['notification_pushplus_key'])) {
+            json_response(400, ['error' => 'missing_pushplus_key', 'message' => '选择 PushPlus 通知时需填写密钥']);
+        }
+        if ($mode === 'webhook' && empty($input['notification_webhook_url']) && empty($user['notification_webhook_url'])) {
+            json_response(400, ['error' => 'missing_webhook_url', 'message' => '选择 Webhook 通知时需填写 URL']);
+        }
+        $updates['notification_mode'] = $mode;
+    }
+
+    // ── 通知邮箱 ──
+    if (isset($input['notification_email'])) {
+        $email = trim($input['notification_email']);
+        if ($email !== '' && !filter_var($email, FILTER_VALIDATE_EMAIL)) {
+            json_response(400, ['error' => 'invalid_notification_email', 'message' => '通知邮箱格式不正确']);
+        }
+        $updates['notification_email'] = $email;
+    }
+
+    // ── PushPlus 密钥 ──
+    if (isset($input['notification_pushplus_key'])) {
+        $key = trim($input['notification_pushplus_key']);
+        if ($key !== '' && strlen($key) > 128) {
+            json_response(400, ['error' => 'pushplus_key_too_long', 'message' => 'PushPlus 密钥过长（最多128字符）']);
+        }
+        $updates['notification_pushplus_key'] = $key;
+    }
+
+    // ── Webhook URL ──
+    if (isset($input['notification_webhook_url'])) {
+        $url = trim($input['notification_webhook_url']);
+        if ($url !== '' && !filter_var($url, FILTER_VALIDATE_URL)) {
+            json_response(400, ['error' => 'invalid_webhook_url', 'message' => 'Webhook URL 格式不正确']);
+        }
+        if ($url !== '' && strlen($url) > 500) {
+            json_response(400, ['error' => 'webhook_url_too_long', 'message' => 'Webhook URL 过长（最多500字符）']);
+        }
+        $updates['notification_webhook_url'] = $url;
+    }
+
+    // ── Webhook 签名密钥 ──
+    if (isset($input['notification_webhook_secret'])) {
+        $secret = trim($input['notification_webhook_secret']);
+        if ($secret !== '' && strlen($secret) > 128) {
+            json_response(400, ['error' => 'webhook_secret_too_long', 'message' => 'Webhook 密钥过长（最多128字符）']);
+        }
+        $updates['notification_webhook_secret'] = $secret;
+    }
+
+    // ── 通知模板 ──
+    if (isset($input['notification_template'])) {
+        $tpl = $input['notification_template'];
+        if (!is_array($tpl)) {
+            json_response(400, ['error' => 'invalid_template', 'message' => '通知模板应为 JSON 对象']);
+        }
+        // 验证键名
+        foreach ($tpl as $method => $templates) {
+            if (!in_array($method, ['email', 'pushplus', 'webhook'], true)) {
+                json_response(400, ['error' => 'invalid_template_method', 'message' => "模板键仅支持 email / pushplus / webhook，收到: {$method}"]);
+            }
+            if (!is_array($templates)) {
+                json_response(400, ['error' => 'invalid_template_format', 'message' => "{$method} 模板应为对象"]);
+            }
+        }
+        $updates['notification_template'] = json_encode($tpl, JSON_UNESCAPED_UNICODE);
     }
 
     if (empty($updates)) {

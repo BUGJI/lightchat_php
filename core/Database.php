@@ -68,10 +68,19 @@ class Database {
                 role VARCHAR(20) DEFAULT 'member',
                 status TINYINT DEFAULT 1,
                 last_active_at TIMESTAMP,
+notification_mode VARCHAR(20) DEFAULT 'none',
+                notification_email VARCHAR(255) DEFAULT '',
+                notification_pushplus_key VARCHAR(128) DEFAULT '',
+                notification_template TEXT DEFAULT NULL,
+                notification_webhook_url VARCHAR(500) DEFAULT '',
+                notification_webhook_secret VARCHAR(128) DEFAULT '',
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         ");
+        
+        // 迁移已有用户，补齐通知字段
+        $this->migrateNotificationFields();
         
         // 创建会话表
         $this->driver->execute("
@@ -232,6 +241,54 @@ class Database {
         }
     }
     
+    /**
+     * 迁移：为已有 users 补齐通知相关字段（仅运行一次）
+     */
+    private function migrateNotificationFields()
+    {
+        // 检查迁移标记，避免每次请求都执行
+        $flagFile = $this->driver instanceof \LocalDriver
+            ? ($this->config['local']['data_path'] ?? '') . '.migrated_notification_fields'
+            : __DIR__ . '/../data/.migrated_notification_fields';
+        if (file_exists($flagFile)) {
+            return;
+        }
+
+$defaults = [
+            'notification_mode'          => 'none',
+            'notification_email'         => '',
+            'notification_pushplus_key'  => '',
+            'notification_template'      => null,
+            'notification_webhook_url'   => '',
+            'notification_webhook_secret' => '',
+        ];
+
+        try {
+            $users = $this->driver->select('users');
+            $batchUpdates = [];
+            foreach ($users as $idx => $user) {
+                $needUpdate = false;
+                foreach ($defaults as $field => $default) {
+                    if (!array_key_exists($field, $user)) {
+                        $user[$field] = $default;
+                        $needUpdate = true;
+                    }
+                }
+                if ($needUpdate) {
+                    $batchUpdates[] = ['id' => $user['id'], 'data' => $user];
+                }
+            }
+            foreach ($batchUpdates as $update) {
+                $this->driver->update('users', $update['data'], ['id' => $update['id']]);
+            }
+        } catch (Exception $e) {
+            // 忽略迁移错误，不阻塞正常使用
+        }
+
+        // 写入标记文件
+        @touch($flagFile);
+    }
+
     /**
      * 魔术方法，调用驱动方法
      */

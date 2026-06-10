@@ -600,6 +600,77 @@ return [
 
     // ==================== 通知配置 ====================
     'notifications' => [
+        // ===== 离线通知 =====
+        'offline_notify' => [
+            'enabled' => true,                         // 全局开关
+            'offline_threshold_minutes' => 10,         // 判定离线：距上次活跃时间 > 此值（分钟）
+            'check_interval_minutes' => 5,             // 检查间隔（分钟）
+        ],
+
+        // ===== 通知方式注册 =====
+        // 每一种通知方式一个键，enabled 控制是否启用该方式
+        'methods' => [
+            'email' => [
+                'enabled' => true,
+                'label'   => '邮件通知',
+                'smtp' => [
+                    'host'     => 'smtp.example.com',
+                    'port'     => 587,
+                    'username' => '',
+                    'password' => '',
+                    'encryption' => 'tls',             // ssl / tls / null
+                    'timeout' => 10,
+                ],
+                'from' => [
+                    'email' => 'noreply@example.com',
+                    'name'  => 'LightChat',
+                ],
+                'templates' => [
+                    'subject' => '【LightChat】您有新的离线消息',
+                    'body'    => "您好 {nickname}，\n\n"
+                        . "您离线期间收到了 {unread_count} 条新消息。\n\n"
+                        . "最近消息：\n{messages_preview}\n\n"
+                        . "发送者：{sender_name}\n"
+                        . "最后消息时间：{last_message_time}\n\n"
+                        . "请登录查看完整内容。\n\n"
+                        . "-- LightChat 通知系统",
+                ],
+            ],
+
+            'pushplus' => [
+                'enabled' => true,
+                'label'   => 'PushPlus',
+                'api_url' => 'https://www.pushplus.plus/send',
+                'channel' => 'wechat',                 // wechat / sms / mail / webhook
+                'template' => 'html',                   // html / txt / json / markdown
+                'timeout' => 10,
+                'templates' => [
+                    'title'   => '【LightChat】离线消息提醒',
+                    'content' => "<h3>您好 {nickname}</h3>"
+                        . "<p>您离线期间收到了 <b>{unread_count}</b> 条新消息。</p>"
+                        . "<p>发送者：{sender_name}<br>"
+                        . "时间：{last_message_time}</p>"
+                        . "<hr><p>{messages_preview}</p>"
+                        . "<p><small>— LightChat 通知系统</small></p>",
+                ],
+            ],
+
+            'webhook' => [
+                'enabled' => true,
+                'label'   => 'Webhook',
+                'timeout' => 10,
+                'templates' => [
+                    'title'   => '【LightChat】离线消息提醒',
+                    'content' => "您好 {nickname}\n\n"
+                        . "您离线期间收到了 {unread_count} 条新消息。\n\n"
+                        . "发送者：{sender_name}\n"
+                        . "时间：{last_message_time}\n\n"
+                        . "{messages_preview}\n\n"
+                        . "-- LightChat 通知系统",
+                ],
+            ],
+        ],
+
         // 系统消息模板（客户端渲染）
         'system_messages' => [
             'welcome' => '欢迎 {username} 加入 {channel}',
@@ -611,35 +682,6 @@ return [
             'channel_created' => '频道 {channel} 已创建',
             'channel_deleted' => '频道 {channel} 已被删除',
             'channel_announcement' => '【公告】{content}',
-        ],
-        
-        // 邮件通知（用于重要提醒，如账号验证、密码重置）
-        'email' => [
-            'enabled' => false,
-            'smtp' => [
-                'host' => 'smtp.gmail.com',
-                'port' => 587,
-                'username' => '',
-                'password' => '',
-                'encryption' => 'tls',                 // ssl, tls, null
-            ],
-            'from' => [
-                'email' => 'noreply@example.com',
-                'name' => 'Chat System',
-            ],
-            'templates' => [
-                'verification' => 'email/verification',
-                'password_reset' => 'email/password_reset',
-                'account_banned' => 'email/account_banned',
-            ],
-        ],
-        
-        // Webhook通知（可对接其他系统）
-        'webhook' => [
-            'enabled' => false,
-            'url' => null,
-            'events' => ['user_register', 'user_ban', 'message_report'],  // 触发的事件
-            'secret' => null,
         ],
     ],
 
