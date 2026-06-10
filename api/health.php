@@ -5,12 +5,29 @@
  * GET /api/health.php
  */
 error_reporting(E_ALL);
-ini_set('display_errors', '0');
+ini_set('display_errors', '1');
+ini_set('log_errors', '1');
+ini_set('error_log', __DIR__ . '/../logs/php_error.log');
 header('Content-Type: application/json; charset=utf-8');
 header('Access-Control-Allow-Origin: *');
 
+// 捕获所有致命错误
+register_shutdown_function(function() {
+    $error = error_get_last();
+    if ($error && in_array($error['type'], [E_ERROR, E_CORE_ERROR, E_COMPILE_ERROR, E_PARSE])) {
+        http_response_code(500);
+        echo json_encode([
+            'all_ok' => false,
+            'fatal_error' => $error,
+            'hint' => '发生致命错误，请查看 logs/php_error.log 或下方 detailed_trace'
+        ], JSON_PRETTY_PRINT);
+        exit;
+    }
+});
+
 $baseDir = realpath(__DIR__ . '/..');
 $checks  = [];
+$detailedTrace = [];
 
 // ── PHP 版本 ──
 $checks['php_version'] = [
@@ -92,9 +109,54 @@ try {
             'value' => $dbType,
             'msg'   => $dbType === 'local' ? 'OK' : '建议使用 local 驱动',
         ];
+        
+        // 测试 Database 类初始化
+        try {
+            require_once $baseDir . '/core/Database.php';
+            $dbStart = microtime(true);
+            $db = \Core\Database::getInstance();
+            $dbTime = round((microtime(true) - $dbStart) * 1000, 2);
+            
+            $checks['db_init'] = [
+                'ok' => true,
+                'time_ms' => $dbTime,
+                'msg' => "Database 初始化成功 ({$dbTime}ms)"
+            ];
+            
+            // 检查 users 表
+            try {
+                $usersCheckStart = microtime(true);
+                $users = $db->select('users');
+                $usersTime = round((microtime(true) - $usersCheckStart) * 1000, 2);
+                $checks['users_table'] = [
+                    'ok' => true,
+                    'count' => count($users),
+                    'time_ms' => $usersTime,
+                    'msg' => "users 表检查成功 ({$usersTime}ms, " . count($users) . " 条记录)"
+                ];
+            } catch (Throwable $e) {
+                $checks['users_table'] = [
+                    'ok' => false,
+                    'error' => $e->getMessage(),
+                    'trace' => explode("\n", $e->getTraceAsString()),
+                    'msg' => 'users 表检查失败'
+                ];
+                $detailedTrace[] = ['step' => 'users_table_check', 'error' => $e->getMessage(), 'trace' => $e->getTraceAsString()];
+            }
+            
+        } catch (Throwable $e) {
+            $checks['db_init'] = [
+                'ok' => false,
+                'error' => $e->getMessage(),
+                'trace' => explode("\n", $e->getTraceAsString()),
+                'msg' => 'Database 初始化失败'
+            ];
+            $detailedTrace[] = ['step' => 'db_init', 'error' => $e->getMessage(), 'trace' => $e->getTraceAsString()];
+        }
     }
 } catch (Throwable $e) {
     $checks['config_load'] = ['ok' => false, 'msg' => $e->getMessage()];
+    $detailedTrace[] = ['step' => 'config_load', 'error' => $e->getMessage(), 'trace' => $e->getTraceAsString()];
 }
 
 // ── 总体 ──
@@ -108,6 +170,7 @@ echo json_encode([
     'all_ok'  => $allOk,
     'base_dir'=> str_replace($baseDir, '...', $baseDir) . '/',
     'checks'  => $checks,
+    'detailed_trace' => $detailedTrace,
     'hint'    => $allOk ? '一切正常，如果仍报错请检查 PHP 错误日志'
-                        : '请修复上面标记为 ❌ 的项',
+                        : '请修复上面标记为 ❌ 的项，查看详细错误信息',
 ], JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
