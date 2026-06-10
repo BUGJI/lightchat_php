@@ -1,4 +1,4 @@
 ```
-# Data files
-data/.migrated_notification_fields
+# Backup files
+*.bak
 ```

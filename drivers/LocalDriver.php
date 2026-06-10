@@ -1,31 +1,35 @@
 <?php
 /**
- * 本地文件存储驱动
- * 适用于没有数据库的虚拟主机，将数据存储在JSON文件中
+ * 本地文件存储驱动（优化版）
+ * 适用于没有数据库的虚拟主机，将数据存储在 JSON 文件中
+ * 
+ * 优化特性：
+ * - 文件锁机制防止并发写入冲突
+ * - 原子写入（临时文件 + rename）防止数据损坏
+ * - 智能缓存减少文件 I/O
+ * - PHP 7.4+ 类型声明支持
  */
 class LocalDriver implements DatabaseDriverInterface {
-    private $config = [];
-    private $dataPath = '';
-    private $tables = [];
-    private $cache = [];
-    private $cacheTime = [];
-    private $cacheEnabled = true;
-    private $cacheTtl = 300;
-    private $inTransaction = false;
-    private $transactionData = [];
+    private array $config = [];
+    private string $dataPath = '';
+    private array $tables = [];
+    private array $cache = [];
+    private array $cacheTime = [];
+    private bool $cacheEnabled = true;
+    private int $cacheTtl = 300;
+    private bool $inTransaction = false;
+    private array $transactionData = [];
     private $lastId = null;
+    private array $fileLocks = [];
+    private const LOCK_EXTENSION = '.lock';
     
-    public function __construct($config) {
+    public function __construct(array $config) {
         $this->config = $config;
         $this->dataPath = rtrim($config['data_path'], '/') . '/';
         
         // 读取缓存配置
-        if (isset($config['cache_enabled'])) {
-            $this->cacheEnabled = (bool)$config['cache_enabled'];
-        }
-        if (isset($config['cache_ttl'])) {
-            $this->cacheTtl = (int)$config['cache_ttl'];
-        }
+        $this->cacheEnabled = $config['cache_enabled'] ?? true;
+        $this->cacheTtl = (int)($config['cache_ttl'] ?? 300);
         
         // 确保数据目录存在
         if (!is_dir($this->dataPath)) {
@@ -35,21 +39,27 @@ class LocalDriver implements DatabaseDriverInterface {
         $this->loadAllTables();
     }
     
-    public function connect() {
+    public function connect(): bool {
         return true;
     }
     
-    public function disconnect() {
+    public function disconnect(): void {
         if (!$this->inTransaction) {
             $this->saveAllTables();
+        }
+        // 释放所有文件锁
+        foreach ($this->fileLocks as $table => $fp) {
+            $this->releaseLock($table);
         }
     }
     
     /**
      * 加载所有表数据
      */
-    private function loadAllTables() {
-        $tables = ['users', 'sessions', 'channels', 'channel_members', 'messages', 'private_chats', 'private_messages', 'uploads', 'bans', 'audit_logs', 'bot_keys', 'user_relations'];
+    private function loadAllTables(): void {
+        $tables = ['users', 'sessions', 'channels', 'channel_members', 'messages', 
+                   'private_chats', 'private_messages', 'uploads', 'bans', 
+                   'audit_logs', 'bot_keys', 'user_relations'];
         
         foreach ($tables as $table) {
             $this->loadTable($table);
@@ -57,11 +67,11 @@ class LocalDriver implements DatabaseDriverInterface {
     }
     
     /**
-     * 加载单个表
+     * 加载单个表（带文件锁保护）
      */
-    private function loadTable($table) {
-        // 检查缓存
-        if ($this->cacheEnabled && isset($this->cache[$table]) && isset($this->cacheTime[$table])) {
+    private function loadTable(string $table): void {
+        // 检查缓存是否有效
+        if ($this->cacheEnabled && isset($this->cache[$table], $this->cacheTime[$table])) {
             if (time() - $this->cacheTime[$table] < $this->cacheTtl) {
                 $this->tables[$table] = $this->cache[$table];
                 return;
@@ -70,15 +80,21 @@ class LocalDriver implements DatabaseDriverInterface {
         
         $file = $this->dataPath . $table . '.json';
         
-        if (file_exists($file)) {
-            $content = file_get_contents($file);
-            $data = json_decode($content, true);
-            $this->tables[$table] = $data ?: ['data' => [], 'next_id' => 1];
-        } else {
-            $this->tables[$table] = ['data' => [], 'next_id' => 1];
+        // 使用共享锁读取文件
+        $this->acquireLock($table, LOCK_SH);
+        try {
+            if (file_exists($file)) {
+                $content = file_get_contents($file);
+                $data = json_decode($content, true);
+                $this->tables[$table] = is_array($data) ? $data : ['data' => [], 'next_id' => 1];
+            } else {
+                $this->tables[$table] = ['data' => [], 'next_id' => 1];
+            }
+        } finally {
+            $this->releaseLock($table);
         }
         
-        // 写入缓存
+        // 更新缓存
         if ($this->cacheEnabled) {
             $this->cache[$table] = $this->tables[$table];
             $this->cacheTime[$table] = time();
@@ -88,23 +104,47 @@ class LocalDriver implements DatabaseDriverInterface {
     /**
      * 保存所有表数据
      */
-    private function saveAllTables() {
+    private function saveAllTables(): void {
         foreach ($this->tables as $table => $data) {
             $this->saveTable($table);
         }
     }
     
     /**
-     * 保存单个表
+     * 保存单个表（原子写入：临时文件 + rename）
      */
-    private function saveTable($table) {
+    private function saveTable(string $table): void {
         if (!isset($this->tables[$table])) {
             return;
         }
         
         $file = $this->dataPath . $table . '.json';
-        $content = json_encode($this->tables[$table], JSON_PRETTY_PRINT);
-        file_put_contents($file, $content);
+        
+        // 使用排他锁写入文件
+        $this->acquireLock($table, LOCK_EX);
+        try {
+            $content = json_encode($this->tables[$table], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+            
+            // 原子写入：先写临时文件，再 rename
+            $tmpFile = $file . '.tmp.' . getmypid();
+            $result = file_put_contents($tmpFile, $content, LOCK_EX);
+            
+            if ($result === false) {
+                throw new Exception("Failed to write temporary file for table: {$table}");
+            }
+            
+            // 确保临时文件写入成功
+            if (!rename($tmpFile, $file)) {
+                @unlink($tmpFile);
+                throw new Exception("Failed to rename temporary file for table: {$table}");
+            }
+            
+            // 设置合适的文件权限
+            @chmod($file, 0644);
+            
+        } finally {
+            $this->releaseLock($table);
+        }
         
         // 更新缓存
         if ($this->cacheEnabled) {
@@ -116,15 +156,46 @@ class LocalDriver implements DatabaseDriverInterface {
     /**
      * 获取表数据引用
      */
-    private function &getTable($table) {
+    private function &getTable(string $table): array {
         if (!isset($this->tables[$table])) {
-            $this->tables[$table] = ['data' => [], 'next_id' => 1];
+            $this->loadTable($table);
         }
         return $this->tables[$table];
     }
     
-    public function query($sql, $params = []) {
-        // 简单解析SELECT语句
+    /**
+     * 获取文件锁
+     */
+    private function acquireLock(string $table, int $operation): void {
+        if (isset($this->fileLocks[$table])) {
+            return; // 已经持有锁
+        }
+        
+        $lockFile = $this->dataPath . $table . self::LOCK_EXTENSION;
+        $fp = fopen($lockFile, 'c+');
+        
+        if ($fp === false) {
+            throw new Exception("Cannot open lock file for table: {$table}");
+        }
+        
+        // 获取锁（阻塞模式）
+        flock($fp, $operation);
+        $this->fileLocks[$table] = $fp;
+    }
+    
+    /**
+     * 释放文件锁
+     */
+    private function releaseLock(string $table): void {
+        if (isset($this->fileLocks[$table])) {
+            flock($this->fileLocks[$table], LOCK_UN);
+            fclose($this->fileLocks[$table]);
+            unset($this->fileLocks[$table]);
+        }
+    }
+    
+    public function query(string $sql, array $params = []): array {
+        // 简单解析 SELECT 语句
         if (preg_match('/SELECT \* FROM (\w+)(?: WHERE (.*))?/i', $sql, $matches)) {
             $table = $matches[1];
             $where = isset($matches[2]) ? $this->parseWhereClause($matches[2], $params) : [];
@@ -133,8 +204,8 @@ class LocalDriver implements DatabaseDriverInterface {
         throw new Exception("LocalDriver: Complex queries not supported, use select/get methods instead");
     }
     
-    public function execute($sql, $params = []) {
-        // 执行DDL语句（创建表）
+    public function execute(string $sql, array $params = []): int {
+        // 执行 DDL 语句（创建表）
         if (preg_match('/CREATE TABLE IF NOT EXISTS (\w+)/i', $sql, $matches)) {
             $table = $matches[1];
             if (!isset($this->tables[$table])) {
@@ -146,7 +217,7 @@ class LocalDriver implements DatabaseDriverInterface {
         throw new Exception("LocalDriver: Execute only supports CREATE TABLE");
     }
     
-    public function insert($table, $data) {
+    public function insert(string $table, array $data) {
         $tableRef = &$this->getTable($table);
         
         $id = $tableRef['next_id']++;
@@ -165,7 +236,7 @@ class LocalDriver implements DatabaseDriverInterface {
         return $id;
     }
     
-    public function update($table, $data, $where) {
+    public function update(string $table, array $data, array $where): int {
         $tableRef = &$this->getTable($table);
         $updated = 0;
         
@@ -180,6 +251,7 @@ class LocalDriver implements DatabaseDriverInterface {
                 $updated++;
             }
         }
+        unset($row); // 断开引用
         
         if (!$this->inTransaction && $updated > 0) {
             $this->saveTable($table);
@@ -190,7 +262,7 @@ class LocalDriver implements DatabaseDriverInterface {
         return $updated;
     }
     
-    public function delete($table, $where) {
+    public function delete(string $table, array $where): int {
         $tableRef = &$this->getTable($table);
         $deleted = 0;
         $newData = [];
@@ -214,12 +286,12 @@ class LocalDriver implements DatabaseDriverInterface {
         return $deleted;
     }
     
-    public function get($table, $where, $fields = '*') {
+    public function get(string $table, array $where, string $fields = '*'): ?array {
         $results = $this->select($table, $where, $fields, '', 1);
         return $results[0] ?? null;
     }
     
-    public function select($table, $where = [], $fields = '*', $order = '', $limit = 0) {
+    public function select(string $table, array $where = [], string $fields = '*', string $order = '', int $limit = 0): array {
         $tableRef = &$this->getTable($table);
         $results = [];
         
@@ -251,17 +323,17 @@ class LocalDriver implements DatabaseDriverInterface {
         return $results;
     }
     
-    public function count($table, $where = []) {
+    public function count(string $table, array $where = []): int {
         return count($this->select($table, $where));
     }
     
-    public function beginTransaction() {
+    public function beginTransaction(): bool {
         $this->inTransaction = true;
         $this->transactionData = [];
         return true;
     }
     
-    public function commit() {
+    public function commit(): bool {
         foreach ($this->transactionData as $table => $_) {
             $this->saveTable($table);
         }
@@ -270,7 +342,7 @@ class LocalDriver implements DatabaseDriverInterface {
         return true;
     }
     
-    public function rollback() {
+    public function rollback(): bool {
         // 重新加载所有表，放弃更改
         $this->loadAllTables();
         $this->inTransaction = false;
@@ -285,7 +357,7 @@ class LocalDriver implements DatabaseDriverInterface {
     /**
      * 检查行是否匹配条件
      */
-    private function matchesWhere($row, $where) {
+    private function matchesWhere(array $row, array $where): bool {
         if (empty($where)) {
             return true;
         }
@@ -318,11 +390,11 @@ class LocalDriver implements DatabaseDriverInterface {
     }
     
     /**
-     * 解析WHERE子句
+     * 解析 WHERE 子句
      */
-    private function parseWhereClause($whereStr, $params) {
+    private function parseWhereClause(string $whereStr, array $params): array {
         $where = [];
-        $conditions = explode(' AND ', $whereStr);
+        $conditions = preg_split('/\s+AND\s+/i', $whereStr);
         
         foreach ($conditions as $condition) {
             if (preg_match('/(\w+)\s*=\s*:(\w+)/', $condition, $matches)) {
@@ -340,12 +412,12 @@ class LocalDriver implements DatabaseDriverInterface {
     /**
      * 排序结果
      */
-    private function sortResults(&$results, $order) {
+    private function sortResults(array &$results, string $order): void {
         if (preg_match('/(\w+)\s+(ASC|DESC)/i', $order, $matches)) {
             $field = $matches[1];
             $direction = strtoupper($matches[2]) === 'ASC' ? SORT_ASC : SORT_DESC;
             
-            usort($results, function($a, $b) use ($field, $direction) {
+            usort($results, static function($a, $b) use ($field, $direction) {
                 $valA = $a[$field] ?? null;
                 $valB = $b[$field] ?? null;
                 
