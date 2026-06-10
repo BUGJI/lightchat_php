@@ -120,7 +120,38 @@ try {
 
     $messageId = $db->insert('messages', $messageData);
 
-    // 如果有 @，生成通知记录（简化：@ 用户的消息靠前端拉取时过滤）
+    // ── 触发离线通知（接收消息时检查） ──
+    require_once __DIR__ . '/../../notifications/NotificationManager.php';
+    $notifConfig = $config['notifications'] ?? [];
+    $offlineCfg = $notifConfig['offline_notify'] ?? [];
+    if (($offlineCfg['enabled'] ?? true) && ($config['notifications']['methods'] ?? [])) {
+        // 获取频道内其他成员
+        $members = $db->select('channel_members', ['channel_id' => $channelId], 'user_id');
+        $memberIds = array_column($members, 'user_id');
+        
+        foreach ($memberIds as $memberId) {
+            if ($memberId == $user['id']) continue; // 跳过发送者
+            
+            $member = $db->get('users', ['id' => $memberId]);
+            if (!$member) continue;
+            
+            // 检查用户是否开启了群通知
+            if (isset($member['notification_group_enabled']) && !(bool)$member['notification_group_enabled']) {
+                continue; // 用户关闭了群通知
+            }
+            
+            $notifMgr = new NotificationManager($notifConfig['methods'] ?? []);
+            $messageDataForNotif = [
+                'nickname'         => $user['username'] ?? $user['nickname'] ?? '未知用户',
+                'unread_count'     => 1,
+                'messages_preview' => mb_substr($content, 0, 100, 'UTF-8'),
+                'sender_name'      => $user['username'] ?? $user['nickname'] ?? '未知用户',
+                'last_message_time'=> date('Y-m-d H:i:s'),
+                'channel_name'     => $channel['name'] ?? '频道',
+            ];
+            $notifMgr->sendIfOffline($member, $messageDataForNotif, $offlineCfg['offline_threshold_minutes'] ?? 10);
+        }
+    }
 } catch (Exception $e) {
     json_response(500, ['error' => 'send_failed', 'message' => '消息发送失败']);
 }

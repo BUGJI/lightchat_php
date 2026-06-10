@@ -1,37 +1,63 @@
-# 数据目录（JSON 存储）
-data/*.json
-
-# 上传文件
-uploads/*
-
-# 日志
-logs/*
-
-# 备份
-backups/*
-
-# 编辑器
+```
+# Logs and temp files
+*.log
+*.tmp
 *.swp
-*.swo
-*~
+
+# Environment
+.env
+.env.local
+*.env.*
+
+# Editors
 .vscode/
 .idea/
 
-# 操作系统
+# Dependencies
+vendor/
+node_modules/
+
+# Build artifacts
+dist/
+build/
+target/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.venv/
+pip-log.txt
+pip-delete-this-directory.txt
+.tox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.log
+*.pot
+*.pyc
+*.pyo
+*.pyd
+.MF
+tags
+TAGS
+ID
+GTAGS
+GRTAGS
+GSYMS
+GPATH
 .DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
 Thumbs.db
-
-# 系统文件
-/.deepseek/
-BOOTSTRAP.md
-HEARTBEAT.md
-TOOLS.md
-SOUL.md
-USER.md
-IDENTITY.md
-AGENTS.md
-MEMORY.md
-memory/
-
-# 原始 voecechat 手表客户端
-public/wear.html
+```
