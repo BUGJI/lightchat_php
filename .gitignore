@@ -1,6 +1,6 @@
-```php
 # Compiled and build artifacts
 *.pyc
+__pycache__/
 *.o
 *.obj
 *.class
@@ -11,14 +11,12 @@
 *.out
 
 # Dependencies
-node_modules/
-venv/
 .venv/
-__pycache__/
-dist/
-build/
-target/
-.gradle/
+venv/
+node_modules/
+vendor/
+composer.lock
+*.lock
 
 # Logs and temp files
 *.log
@@ -37,40 +35,16 @@ target/
 *.swp
 *.swo
 
+# Build and distribution
+dist/
+build/
+target/
+coverage/
+htmlcov/
+.mypy_cache/
+.pytest_cache/
+.coverage
+
 # System files
 .DS_Store
 Thumbs.db
-
-# Coverage reports
-coverage/
-htmlcov/
-.coverage
-
-# MyPy cache
-.mypy_cache/
-.pytest_cache/
-
-# Compressed files
-*.zip
-*.gz
-*.tar
-*.tgz
-*.bz2
-*.xz
-*.7z
-*.rar
-*.zst
-*.lz4
-*.lzh
-*.cab
-*.arj
-*.rpm
-*.deb
-*.Z
-*.lz
-*.lzo
-*.tar.gz
-*.tar.bz2
-*.tar.xz
-*.tar.zst
-```

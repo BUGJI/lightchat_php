@@ -287,7 +287,21 @@ notification_mode VARCHAR(20) DEFAULT 'none',
             return;
         }
 
-$defaults = [
+        // 检查 users 表是否存在，不存在则直接创建标记文件并返回
+        try {
+            $users = $this->driver->select('users');
+            if (empty($users)) {
+                // 表为空，无需迁移，直接创建标记文件
+                @touch($flagFile);
+                return;
+            }
+        } catch (Exception $e) {
+            // 表不存在或其他错误，直接创建标记文件并返回
+            @touch($flagFile);
+            return;
+        }
+
+        $defaults = [
             'notification_mode'          => 'none',
             'notification_email'         => '',
             'notification_pushplus_key'  => '',
@@ -297,9 +311,8 @@ $defaults = [
         ];
 
         try {
-            $users = $this->driver->select('users');
             $batchUpdates = [];
-            foreach ($users as $idx => $user) {
+            foreach ($users as $user) {
                 $needUpdate = false;
                 foreach ($defaults as $field => $default) {
                     if (!array_key_exists($field, $user)) {
