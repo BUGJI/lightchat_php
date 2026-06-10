@@ -1,0 +1,26 @@
+{
+    "data": [
+        {
+            "name": "general",
+            "display_name": "\u95f2\u804a\u5927\u5385",
+            "type": "public",
+            "id": 1,
+            "created_at": "2026-06-11 02:07:33"
+        },
+        {
+            "name": "announcements",
+            "display_name": "\u7cfb\u7edf\u516c\u544a",
+            "type": "announcement",
+            "id": 2,
+            "created_at": "2026-06-11 02:07:33"
+        },
+        {
+            "name": "help",
+            "display_name": "\u5e2e\u52a9\u4e2d\u5fc3",
+            "type": "public",
+            "id": 3,
+            "created_at": "2026-06-11 02:07:33"
+        }
+    ],
+    "next_id": 4
+}
