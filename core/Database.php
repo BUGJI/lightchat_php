@@ -226,6 +226,20 @@ notification_mode VARCHAR(20) DEFAULT 'none',
             )
         ");
         
+        // 创建用户关系表（好友/屏蔽/黑名单）
+        $this->driver->execute("
+            CREATE TABLE IF NOT EXISTS user_relations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                target_user_id INTEGER NOT NULL,
+                relation_type VARCHAR(20) DEFAULT 'friend',
+                mute_notifications TINYINT DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(user_id, target_user_id)
+            )
+        ");
+        
         // 创建默认频道
         $defaultChannels = [
             ['name' => 'general', 'display_name' => '闲聊大厅', 'type' => 'public'],

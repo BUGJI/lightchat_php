@@ -360,6 +360,22 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC'
   </div>
 </div>
 
+<!-- ═══════════ Friend Management Modal ═══════════ -->
+<div class="modal-overlay" id="friendModal" style="display:none">
+  <div class="modal" style="max-width:500px">
+    <h3>👥 好友管理</h3>
+    <div style="margin-bottom:12px;display:flex;gap:8px">
+      <button class="btn-sm" id="showFriendsBtn" style="flex:1;background:var(--primary);color:#fff">好友</button>
+      <button class="btn-sm" id="showBlockedBtn" style="flex:1">屏蔽</button>
+      <button class="btn-sm" id="showBlacklistBtn" style="flex:1">黑名单</button>
+    </div>
+    <div id="friendListContent" style="max-height:300px;overflow-y:auto"></div>
+    <div class="btn-row">
+      <button class="btn-cancel" id="friendClose">关闭</button>
+    </div>
+  </div>
+</div>
+
 <!-- ═══ 图片查看器 ═══ -->
 <div id="imgViewer" onclick="hideImg()"><img id="imgViewerImg" src="" alt=""></div>
 
@@ -756,7 +772,8 @@ function renderSidebar() {
   // 用户信息
   if (S.user) {
     document.getElementById('sidebarUserInfo').innerHTML =
-      '<li><span style="opacity:.7">👤</span> ' + esc(S.user.username) + ' <span class="badge">' + esc(S.user.role) + '</span></li>';
+      '<li><span style="opacity:.7">👤</span> ' + esc(S.user.username) + ' <span class="badge">' + esc(S.user.role) + '</span></li>' +
+      '<li style="cursor:pointer;opacity:.7;font-size:13px" onclick="showFriendModal()">👥 好友管理</li>';
   }
 
   // 服务器资源状态（所有人可见）
@@ -1042,6 +1059,133 @@ async function showSearchUser() {
   document.getElementById('searchUserInput').focus();
 }
 function hideSearchUser() { document.getElementById('searchModal').style.display = 'none'; }
+
+// 好友管理相关
+let _currentFriendTab = 'friend';
+
+async function showFriendModal() {
+  document.getElementById('friendModal').style.display = '';
+  _currentFriendTab = 'friend';
+  updateFriendTabButtons();
+  await loadFriendList('friend');
+}
+
+function hideFriendModal() { document.getElementById('friendModal').style.display = 'none'; }
+
+function updateFriendTabButtons() {
+  const friendsBtn = document.getElementById('showFriendsBtn');
+  const blockedBtn = document.getElementById('showBlockedBtn');
+  const blacklistBtn = document.getElementById('showBlacklistBtn');
+  
+  friendsBtn.style.background = _currentFriendTab === 'friend' ? 'var(--primary)' : '#eee';
+  friendsBtn.style.color = _currentFriendTab === 'friend' ? '#fff' : '#555';
+  blockedBtn.style.background = _currentFriendTab === 'blocked' ? 'var(--primary)' : '#eee';
+  blockedBtn.style.color = _currentFriendTab === 'blocked' ? '#fff' : '#555';
+  blacklistBtn.style.background = _currentFriendTab === 'blacklist' ? 'var(--primary)' : '#eee';
+  blacklistBtn.style.color = _currentFriendTab === 'blacklist' ? '#fff' : '#555';
+}
+
+document.getElementById('showFriendsBtn').onclick = async () => {
+  _currentFriendTab = 'friend';
+  updateFriendTabButtons();
+  await loadFriendList('friend');
+};
+
+document.getElementById('showBlockedBtn').onclick = async () => {
+  _currentFriendTab = 'blocked';
+  updateFriendTabButtons();
+  await loadFriendList('blocked');
+};
+
+document.getElementById('showBlacklistBtn').onclick = async () => {
+  _currentFriendTab = 'blacklist';
+  updateFriendTabButtons();
+  await loadFriendList('blacklist');
+};
+
+document.getElementById('friendClose').onclick = hideFriendModal;
+
+async function loadFriendList(type) {
+  try {
+    const data = await get('/api/users/relations.php?action=list&type=' + type);
+    const relations = data.relations || [];
+    const contentEl = document.getElementById('friendListContent');
+    
+    if (relations.length === 0) {
+      contentEl.innerHTML = '<div style="padding:20px;text-align:center;color:#888">暂无数据</div>';
+      return;
+    }
+    
+    let html = '';
+    for (const rel of relations) {
+      let actions = '';
+      if (type === 'friend') {
+        actions = 
+          '<button class="btn-sm" onclick="blockUser(' + rel.target_user_id + ',this)" style="margin-right:4px;font-size:11px;padding:4px 8px">🔇 屏蔽</button>' +
+          '<button class="btn-sm" onclick="removeFriend(' + rel.target_user_id + ',this)" style="margin-right:4px;font-size:11px;padding:4px 8px;background:#e74c3c;color:#fff">移除</button>' +
+          '<button class="btn-sm" onclick="blacklistUser(' + rel.target_user_id + ',this)" style="font-size:11px;padding:4px 8px;background:#c0392b;color:#fff">拉黑</button>';
+      } else if (type === 'blocked') {
+        actions = 
+          '<button class="btn-sm" onclick="unblockUser(' + rel.target_user_id + ',this)" style="margin-right:4px;font-size:11px;padding:4px 8px;background:var(--primary);color:#fff">取消屏蔽</button>' +
+          '<button class="btn-sm" onclick="removeFriend(' + rel.target_user_id + ',this)" style="font-size:11px;padding:4px 8px;background:#e74c3c;color:#fff">移除</button>';
+      } else if (type === 'blacklist') {
+        actions = 
+          '<button class="btn-sm" onclick="unblacklistUser(' + rel.target_user_id + ',this)" style="font-size:11px;padding:4px 8px;background:var(--primary);color:#fff">移出黑名单</button>';
+      }
+      
+      html += '<div style="padding:10px;border-bottom:1px solid #eee;display:flex;align-items:center;justify-content:space-between">' +
+        '<div style="display:flex;align-items:center;gap:8px">' +
+        '<span style="font-size:18px">👤</span>' +
+        '<div><div style="font-weight:600">' + esc(rel.target_username) + '</div>' +
+        (rel.mute_notifications ? '<div style="font-size:11px;color:#f39c12">🔇 已屏蔽通知</div>' : '') +
+        '</div></div>' +
+        '<div>' + actions + '</div>' +
+        '</div>';
+    }
+    contentEl.innerHTML = html;
+  } catch(e) {
+    document.getElementById('friendListContent').innerHTML = '<div style="color:#e74c3c;padding:20px;text-align:center">加载失败</div>';
+  }
+}
+
+async function removeFriend(userId, btn) {
+  if (!confirm('确定要移除该好友吗？')) return;
+  try {
+    await post('/api/users/relations.php', { action: 'remove', target_user_id: userId });
+    await loadFriendList(_currentFriendTab);
+    await loadPrivateChats();
+  } catch(e) { alert(e.message); }
+}
+
+async function blockUser(userId, btn) {
+  try {
+    await post('/api/users/relations.php', { action: 'block', target_user_id: userId });
+    await loadFriendList('blocked');
+  } catch(e) { alert(e.message); }
+}
+
+async function unblockUser(userId, btn) {
+  try {
+    await post('/api/users/relations.php', { action: 'unblock', target_user_id: userId });
+    await loadFriendList('friend');
+  } catch(e) { alert(e.message); }
+}
+
+async function blacklistUser(userId, btn) {
+  if (!confirm('确定要将该用户加入黑名单吗？对方将无法给您发送私信。')) return;
+  try {
+    await post('/api/users/relations.php', { action: 'blacklist', target_user_id: userId });
+    await loadFriendList('blacklist');
+    await loadPrivateChats();
+  } catch(e) { alert(e.message); }
+}
+
+async function unblacklistUser(userId, btn) {
+  try {
+    await post('/api/users/relations.php', { action: 'unblacklist', target_user_id: userId });
+    await loadFriendList('friend');
+  } catch(e) { alert(e.message); }
+}
 
 /* ── 辅助函数 ── */
 function esc(s) { if (!s) return ''; const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
