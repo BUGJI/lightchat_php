@@ -601,10 +601,11 @@ return [
     // ==================== 通知配置 ====================
     'notifications' => [
         // ===== 离线通知 =====
+        // 注意：离线通知现在由接收消息事件触发，不再需要定时检查
         'offline_notify' => [
             'enabled' => true,                         // 全局开关
             'offline_threshold_minutes' => 10,         // 判定离线：距上次活跃时间 > 此值（分钟）
-            'check_interval_minutes' => 5,             // 检查间隔（分钟）
+            // 'check_interval_minutes' => 5,          // 已废弃：不再使用定时检查
         ],
 
         // ===== 通知方式注册 =====

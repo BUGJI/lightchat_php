@@ -81,6 +81,8 @@ if ($method === 'GET') {
                 'pushplus_key'  => $user['notification_pushplus_key'] ?? '',
                 'webhook_url'   => $user['notification_webhook_url'] ?? '',
                 'webhook_secret' => $user['notification_webhook_secret'] ?? '',
+                'group_enabled'  => isset($user['notification_group_enabled']) ? (bool)$user['notification_group_enabled'] : true,
+                'private_enabled' => isset($user['notification_private_enabled']) ? (bool)$user['notification_private_enabled'] : true,
                 'template'      => $user['notification_template'] 
                     ? json_decode($user['notification_template'], true) 
                     : null,
@@ -296,6 +298,16 @@ if ($method === 'POST') {
         $updates['notification_webhook_secret'] = $secret;
     }
 
+
+    // ── 群通知开关 ──
+    if (isset($input['notification_group_enabled'])) {
+        $updates['notification_group_enabled'] = $input['notification_group_enabled'] ? 1 : 0;
+    }
+
+    // ── 私信通知开关 ──
+    if (isset($input['notification_private_enabled'])) {
+        $updates['notification_private_enabled'] = $input['notification_private_enabled'] ? 1 : 0;
+    }
     // ── 通知模板 ──
     if (isset($input['notification_template'])) {
         $tpl = $input['notification_template'];

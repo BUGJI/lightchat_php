@@ -271,6 +271,14 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC'
           <option value="webhook">Webhook</option>
         </select>
       </div>
+      <div class="form-group" style="margin-top:8px;display:flex;gap:16px;flex-wrap:wrap">
+        <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer">
+          <input type="checkbox" id="notifGroupEnabled" style="width:auto;margin:0"> 接收群通知
+        </label>
+        <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer">
+          <input type="checkbox" id="notifPrivateEnabled" style="width:auto;margin:0"> 接收私信通知
+        </label>
+      </div>
       <div class="notif-cond" id="notifEmailBlock">
         <label>通知邮箱</label>
         <input type="email" id="notifEmail" placeholder="your@email.com">
@@ -913,6 +921,8 @@ async function loadSettingsProfile() {
     document.getElementById('notifPushplusKey').value = notif.pushplus_key || '';
     document.getElementById('notifWebhookUrl').value = notif.webhook_url || '';
     document.getElementById('notifWebhookSecret').value = notif.webhook_secret || '';
+    document.getElementById('notifGroupEnabled').checked = notif.group_enabled !== false;
+    document.getElementById('notifPrivateEnabled').checked = notif.private_enabled !== false;
     toggleNotifFields();
     // Store original username for comparison
     S._origUsername = u.username;
@@ -980,6 +990,9 @@ document.getElementById('settingsSave').onclick = async () => {
     body.notification_webhook_url = '';
     body.notification_webhook_secret = '';
   }
+  // 群通知和私信通知开关
+  body.notification_group_enabled = document.getElementById('notifGroupEnabled').checked;
+  body.notification_private_enabled = document.getElementById('notifPrivateEnabled').checked;
 
   // 始终保存 API 地址
   const apiVal = document.getElementById('apiBaseInput').value.trim();
