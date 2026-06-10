@@ -29,6 +29,17 @@ foreach ($allChats as $chat) {
     }
 
     $otherUserId = ($uid1 === $user['id']) ? $uid2 : $uid1;
+    
+    // 检查是否将对方加入黑名单，如果是则不显示该会话
+    $blacklistCheck = $db->get('user_relations', [
+        'user_id' => $user['id'],
+        'target_user_id' => $otherUserId,
+        'relation_type' => 'blacklist',
+    ]);
+    if ($blacklistCheck) {
+        continue;
+    }
+    
     $otherUser   = $db->get('users', ['id' => $otherUserId]);
 
     // 统计未读数
@@ -37,6 +48,15 @@ foreach ($allChats as $chat) {
         'to_user_id'   => $user['id'],
         'is_read'      => 0,
     ]);
+
+    // 检查是否屏蔽了该用户的通知
+    $muteCheck = $db->get('user_relations', [
+        'user_id' => $user['id'],
+        'target_user_id' => $otherUserId,
+        'relation_type' => 'friend',
+        'mute_notifications' => 1,
+    ]);
+    $isMuted = $muteCheck ? true : false;
 
     $chats[] = [
         'id'               => (int)$chat['id'],
@@ -47,6 +67,7 @@ foreach ($allChats as $chat) {
         'last_message'     => $chat['last_message'] ?? '',
         'last_message_at'  => $chat['last_message_at'] ?? '',
         'unread_count'     => $unread,
+        'is_muted'         => $isMuted,
         'created_at'       => $chat['created_at'] ?? '',
     ];
 }

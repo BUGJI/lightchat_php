@@ -58,6 +58,16 @@ if (!$toUser) {
     json_response(404, ['error' => 'not_found', 'message' => '接收方用户不存在']);
 }
 
+// ── 检查黑名单 ──
+$blacklistCheck = $db->get('user_relations', [
+    'user_id' => $toUserId,
+    'target_user_id' => $user['id'],
+    'relation_type' => 'blacklist',
+]);
+if ($blacklistCheck) {
+    json_response(403, ['error' => 'blocked_by_user', 'message' => '您已被对方加入黑名单，无法发送消息']);
+}
+
 // ── 敏感词过滤 ──
 $content = filter_sensitive_words($content);
 
@@ -125,15 +135,26 @@ try {
         if ($toUserFull) {
             // 检查用户是否开启了私信通知
             if (!isset($toUserFull['notification_private_enabled']) || (bool)$toUserFull['notification_private_enabled']) {
-                $notifMgr = new NotificationManager($notifConfig['methods'] ?? []);
-                $messageDataForNotif = [
-                    'nickname'         => $user['username'] ?? $user['nickname'] ?? '未知用户',
-                    'unread_count'     => 1,
-                    'messages_preview' => mb_substr($content, 0, 100, 'UTF-8'),
-                    'sender_name'      => $user['username'] ?? $user['nickname'] ?? '未知用户',
-                    'last_message_time'=> date('Y-m-d H:i:s'),
-                ];
-                $notifMgr->sendIfOffline($toUserFull, $messageDataForNotif, $offlineCfg['offline_threshold_minutes'] ?? 10);
+                // 检查发送方是否被屏蔽通知
+                $muteCheck = $db->get('user_relations', [
+                    'user_id' => $toUserId,
+                    'target_user_id' => $user['id'],
+                    'relation_type' => 'friend',
+                    'mute_notifications' => 1,
+                ]);
+                
+                // 如果未被屏蔽，则发送通知
+                if (!$muteCheck) {
+                    $notifMgr = new NotificationManager($notifConfig['methods'] ?? []);
+                    $messageDataForNotif = [
+                        'nickname'         => $user['username'] ?? $user['nickname'] ?? '未知用户',
+                        'unread_count'     => 1,
+                        'messages_preview' => mb_substr($content, 0, 100, 'UTF-8'),
+                        'sender_name'      => $user['username'] ?? $user['nickname'] ?? '未知用户',
+                        'last_message_time'=> date('Y-m-d H:i:s'),
+                    ];
+                    $notifMgr->sendIfOffline($toUserFull, $messageDataForNotif, $offlineCfg['offline_threshold_minutes'] ?? 10);
+                }
             }
         }
     }
