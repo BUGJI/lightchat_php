@@ -1,20 +1,27 @@
 <?php
 /**
- * 数据库管理类
+ * 数据库管理类（优化版）
  * 统一数据库入口，自动选择驱动
+ * 
+ * 优化特性：
+ * - PHP 7.4+ 类型声明
+ * - 延迟加载驱动
+ * - 连接状态检查
+ * - 虚拟主机兼容性增强
  */
 class Database {
-    private static $instance = null;
+    private static ?Database $instance = null;
     private $driver = null;
-    private $config = [];
+    private array $config = [];
+    private bool $tablesInitialized = false;
     
     private function __construct() {
         global $config;
-        $this->config = $config['database']['default'];
+        $this->config = $config['database']['default'] ?? [];
         $this->initDriver();
     }
     
-    public static function getInstance() {
+    public static function getInstance(): Database {
         if (self::$instance === null) {
             self::$instance = new self();
         }
@@ -24,8 +31,8 @@ class Database {
     /**
      * 初始化数据库驱动
      */
-    private function initDriver() {
-        $type = $this->config['type'];
+    private function initDriver(): void {
+        $type = $this->config['type'] ?? 'local';
         
         require_once __DIR__ . '/DatabaseDriverInterface.php';
         
@@ -36,18 +43,27 @@ class Database {
                 break;
             case 'sqlite':
                 require_once __DIR__ . '/../drivers/SQLiteDriver.php';
-                $this->driver = new SQLiteDriver($this->config['sqlite']);
+                $this->driver = new SQLiteDriver($this->config['sqlite'] ?? []);
                 break;
             case 'local':
-                require_once __DIR__ . '/../drivers/LocalDriver.php';
-                $this->driver = new LocalDriver($this->config['local']);
-                break;
             default:
-                throw new Exception("Unsupported database type: {$type}");
+                require_once __DIR__ . '/../drivers/LocalDriver.php';
+                $this->driver = new LocalDriver($this->config['local'] ?? ['data_path' => __DIR__ . '/../data/']);
+                break;
         }
         
         $this->driver->connect();
+    }
+    
+    /**
+     * 确保数据表已初始化（延迟初始化）
+     */
+    private function ensureTablesInitialized(): void {
+        if ($this->tablesInitialized) {
+            return;
+        }
         $this->initTables();
+        $this->tablesInitialized = true;
     }
     
     /**
