@@ -49,7 +49,7 @@ class LocalDriver implements DatabaseDriverInterface {
      * 加载所有表数据
      */
     private function loadAllTables() {
-        $tables = ['users', 'sessions', 'channels', 'channel_members', 'messages', 'private_chats', 'private_messages', 'uploads', 'bans', 'audit_logs', 'bot_keys'];
+        $tables = ['users', 'sessions', 'channels', 'channel_members', 'messages', 'private_chats', 'private_messages', 'uploads', 'bans', 'audit_logs', 'bot_keys', 'user_relations'];
         
         foreach ($tables as $table) {
             $this->loadTable($table);
