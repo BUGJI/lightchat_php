@@ -114,6 +114,29 @@ try {
 
     // ── 存储私聊消息 ──
     $messageId = $db->insert('private_messages', $messageData);
+
+    // ── 触发离线通知（接收消息时检查） ──
+    require_once __DIR__ . '/../../notifications/NotificationManager.php';
+    $notifConfig = $config['notifications'] ?? [];
+    $offlineCfg = $notifConfig['offline_notify'] ?? [];
+    if (($offlineCfg['enabled'] ?? true) && ($config['notifications']['methods'] ?? [])) {
+        // 检查接收方是否开启了私信通知
+        $toUserFull = $db->get('users', ['id' => $toUserId]);
+        if ($toUserFull) {
+            // 检查用户是否开启了私信通知
+            if (!isset($toUserFull['notification_private_enabled']) || (bool)$toUserFull['notification_private_enabled']) {
+                $notifMgr = new NotificationManager($notifConfig['methods'] ?? []);
+                $messageDataForNotif = [
+                    'nickname'         => $user['username'] ?? $user['nickname'] ?? '未知用户',
+                    'unread_count'     => 1,
+                    'messages_preview' => mb_substr($content, 0, 100, 'UTF-8'),
+                    'sender_name'      => $user['username'] ?? $user['nickname'] ?? '未知用户',
+                    'last_message_time'=> date('Y-m-d H:i:s'),
+                ];
+                $notifMgr->sendIfOffline($toUserFull, $messageDataForNotif, $offlineCfg['offline_threshold_minutes'] ?? 10);
+            }
+        }
+    }
 } catch (Exception $e) {
     json_response(500, ['error' => 'send_failed', 'message' => '私聊消息发送失败']);
 }
