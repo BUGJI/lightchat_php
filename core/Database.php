@@ -17,6 +17,13 @@ class Database {
     
     private function __construct() {
         global $config;
+        // 确保配置已加载
+        if (empty($config) || empty($config['database'])) {
+            $configFile = __DIR__ . '/../config.php';
+            if (file_exists($configFile)) {
+                $config = require $configFile;
+            }
+        }
         $this->config = $config['database']['default'] ?? [];
         $this->initDriver();
     }

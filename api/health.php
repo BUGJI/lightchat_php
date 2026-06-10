@@ -112,7 +112,11 @@ try {
         
         // 测试 Database 类初始化
         try {
+            // 显式引入依赖文件，防止自动加载失效
+            require_once $baseDir . '/core/DatabaseDriverInterface.php';
+            require_once $baseDir . '/drivers/LocalDriver.php';
             require_once $baseDir . '/core/Database.php';
+            
             $dbStart = microtime(true);
             $db = \Core\Database::getInstance();
             $dbTime = round((microtime(true) - $dbStart) * 1000, 2);
