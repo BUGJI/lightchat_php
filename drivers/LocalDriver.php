@@ -194,7 +194,7 @@ class LocalDriver implements DatabaseDriverInterface {
         }
     }
     
-    public function query(string $sql, array $params = []): array {
+    public function query($sql, $params = []) {
         // 简单解析 SELECT 语句
         if (preg_match('/SELECT \* FROM (\w+)(?: WHERE (.*))?/i', $sql, $matches)) {
             $table = $matches[1];
