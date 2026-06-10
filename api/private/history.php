@@ -44,18 +44,34 @@ if ($user['id'] !== $uid1 && $user['id'] !== $uid2) {
     json_response(403, ['error' => 'forbidden', 'message' => '你不在该私聊中']);
 }
 
-// ── 获取消息 ──
+// ── 构建分页查询条件 ──
 $where = ['chat_id' => $chatId];
+$orderBy = 'id ASC';
+$limitVal = $limit;
+$offset = 0;
 
-// ── 获取消息（id ASC = 旧→新），取最新一批 ──
-$allMsgs = $db->select('private_messages', $where, '*', 'id ASC');
-$total = count($allMsgs);
-$start = max(0, $total - $limit - 1);
-$msgs = array_slice($allMsgs, $start, $limit + 1);
+// 如果提供了 before 参数，获取此 ID 之前的消息
+if ($before > 0) {
+    // 使用子查询或条件来获取 before 之前的消息
+    // SQLite/MySQL 都支持的方式：直接加条件 id < before
+    $customWhere = "chat_id = ? AND id < ?";
+    $params = [$chatId, $before];
+    
+    // 获取消息（从后往前取 limit+1 条来判断是否有更多）
+    $msgs = $db->driver->select('private_messages', $customWhere, $params, '*', 'id DESC', $limit + 1);
+    // 反转回正序（旧→新）
+    $msgs = array_reverse($msgs);
+} else {
+    // 没有 before 参数，取最新的 limit+1 条
+    $allMsgs = $db->select('private_messages', $where, '*', 'id DESC', $limit + 1);
+    // 反转为正序（旧→新）
+    $msgs = array_reverse($allMsgs);
+}
 
+// 判断是否有更多
 $hasMore = count($msgs) > $limit;
 if ($hasMore) {
-    array_pop($msgs);
+    array_pop($msgs); // 移除多余的一条
 }
 
 // ── 过滤已删除 ──

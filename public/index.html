@@ -513,8 +513,10 @@ async function sendPrivateMsg(toUserId, content, type, fileId) {
   const r = await post('/api/private/send.php', { to_user_id: toUserId, content, type: type || 'text', file_id: fileId || undefined });
   // 刷新私聊列表
   await loadPrivateChats();
-  // 如果当前在这个私聊里，加载历史
+  // 如果当前在这个私聊里，清空缓存并加载历史
   if (S.activeChat && S.activeChat.type === 'private' && S.activeChat.id === r.chat_id) {
+    const storageKey = 'lc_private_msgs_' + r.chat_id;
+    localStorage.removeItem(storageKey);
     await loadMessages();
   }
   return r;
@@ -526,7 +528,10 @@ async function searchUsers(q) {
 }
 
 /* ── 消息 ── */
-async function loadMessages() {
+// 私聊消息本地缓存结构：{ chatId: { messages: [], latestTimestamp: '', hasMore: false } }
+const privateMsgCache = {};
+
+async function loadMessages(beforeId = null) {
   if (!S.activeChat) return;
   const cacheKey = S.activeChat.type + '_' + S.activeChat.id;
   let msgs;
@@ -534,12 +539,45 @@ async function loadMessages() {
   if (S.activeChat.type === 'channel') {
     const data = await get('/api/messages/history.php?channel_id=' + S.activeChat.id + '&limit=100');
     msgs = data.messages || [];
+    S.messages[cacheKey] = msgs;
   } else {
-    const data = await get('/api/private/history.php?chat_id=' + S.activeChat.id + '&limit=100');
-    msgs = data.messages || [];
+    // 私聊：使用 localStorage 缓存 + 分页加载
+    const storageKey = 'lc_private_msgs_' + S.activeChat.id;
+    const cached = JSON.parse(localStorage.getItem(storageKey) || '{"messages":[],"latestTimestamp":"","hasMore":false}');
+    
+    if (beforeId !== null) {
+      // 加载更多历史消息（分页）
+      const data = await get('/api/private/history.php?chat_id=' + S.activeChat.id + '&before=' + beforeId + '&limit=50');
+      const newMsgs = data.messages || [];
+      // 合并到缓存前面
+      cached.messages = [...newMsgs, ...cached.messages];
+      cached.hasMore = data.has_more !== false && newMsgs.length >= 50;
+      localStorage.setItem(storageKey, JSON.stringify(cached));
+    } else {
+      // 首次加载，优先使用缓存
+      if (cached.messages.length > 0) {
+        msgs = cached.messages;
+      } else {
+        // 无缓存，从 API 加载最新 100 条
+        const data = await get('/api/private/history.php?chat_id=' + S.activeChat.id + '&limit=100');
+        msgs = data.messages || [];
+        // 保存到缓存
+        cached.messages = msgs;
+        cached.hasMore = data.has_more !== false && msgs.length >= 100;
+        if (msgs.length > 0) {
+          cached.latestTimestamp = msgs[msgs.length - 1].created_at;
+        }
+        localStorage.setItem(storageKey, JSON.stringify(cached));
+      }
+    }
+    msgs = cached.messages;
   }
 
-  S.messages[cacheKey] = msgs;
+  if (!S.messages[cacheKey]) S.messages[cacheKey] = [];
+  // 更新内存中的消息（用于轮询对比）
+  if (S.activeChat.type !== 'channel') {
+    S.messages[cacheKey] = msgs;
+  }
   if (msgs.length > 0) S.lastPollId = msgs[msgs.length - 1].id;
   renderMessages();
 }
@@ -596,6 +634,7 @@ async function poll() {
     if (data.messages && data.messages.length > 0) {
       const cacheKey = S.activeChat.type + '_' + S.activeChat.id;
       if (!S.messages[cacheKey]) S.messages[cacheKey] = [];
+      
       // 合并去重
       const existingIds = new Set(S.messages[cacheKey].map(m => m.id));
       for (const m of data.messages) {
@@ -605,6 +644,21 @@ async function poll() {
         }
       }
       S.lastPollId = data.latest_id || S.lastPollId;
+      
+      // 私聊：同步更新 localStorage 缓存
+      if (S.activeChat.type === 'private') {
+        const storageKey = 'lc_private_msgs_' + S.activeChat.id;
+        const cached = JSON.parse(localStorage.getItem(storageKey) || '{\"messages\":[],\"hasMore\":false}');
+        // 合并新消息到缓存
+        const cachedIds = new Set(cached.messages.map(m => m.id));
+        for (const m of data.messages) {
+          if (!cachedIds.has(m.id)) {
+            cached.messages.push(m);
+          }
+        }
+        localStorage.setItem(storageKey, JSON.stringify(cached));
+      }
+      
       renderMessages();
       scrollToBottom();
     }
@@ -641,6 +695,9 @@ function selectPrivate(chatId) {
   S.activeChat = { id: pc.id, type: 'private', name: pc.other_username, otherUserId: pc.other_user_id, pc };
   renderSidebar();
   renderMain();
+  // 切换私聊时清空 localStorage 缓存，强制重新加载最新数据
+  const storageKey = 'lc_private_msgs_' + chatId;
+  localStorage.removeItem(storageKey);
   loadMessages();
   startPolling();
 }
@@ -708,7 +765,36 @@ function renderMessages() {
   }
 
   inputArea.style.display = 'flex';
-  messageArea.innerHTML = renderMessageList(msgs);
+  
+  // 私聊添加"加载更多"按钮
+  let loadMoreHtml = '';
+  if (S.activeChat.type === 'private') {
+    const storageKey = 'lc_private_msgs_' + S.activeChat.id;
+    const cached = JSON.parse(localStorage.getItem(storageKey) || '{"hasMore":false}');
+    if (cached.hasMore && msgs.length > 0) {
+      const firstMsgId = msgs[0].id;
+      loadMoreHtml = '<div style="text-align:center;padding:8px 0">' +
+        '<button id="loadMoreBtn" class="btn-sm" style="background:#eee;color:#555;border:none;padding:6px 16px;border-radius:6px;font-size:12px;cursor:pointer">加载更多历史消息</button>' +
+        '</div>';
+    }
+  }
+  
+  messageArea.innerHTML = loadMoreHtml + renderMessageList(msgs);
+  
+  // 绑定加载更多事件
+  if (S.activeChat.type === 'private' && document.getElementById('loadMoreBtn')) {
+    document.getElementById('loadMoreBtn').onclick = function() {
+      const firstMsgId = msgs[0].id;
+      loadMessages(firstMsgId).then(() => {
+        // 保持滚动位置
+        setTimeout(() => {
+          const area = document.getElementById('messageArea');
+          area.scrollTop = 80; // 大致保持在加载的内容附近
+        }, 100);
+      });
+    };
+  }
+  
   scrollToBottom();
 }
 

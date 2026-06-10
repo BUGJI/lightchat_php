@@ -49,13 +49,27 @@ foreach ($allChats as $chat) {
         'is_read'      => 0,
     ]);
 
-    // 检查是否屏蔽了该用户的通知
+    // 检查是否屏蔽了该用户的通知（支持 friend 和 blocked 两种类型）
     $muteCheck = $db->get('user_relations', [
         'user_id' => $user['id'],
         'target_user_id' => $otherUserId,
         'relation_type' => 'friend',
         'mute_notifications' => 1,
     ]);
+    
+    // 如果不是好友关系，检查是否有 blocked 类型的静音记录
+    if (!$muteCheck) {
+        $blockedMuteCheck = $db->get('user_relations', [
+            'user_id' => $user['id'],
+            'target_user_id' => $otherUserId,
+            'relation_type' => 'blocked',
+            'mute_notifications' => 1,
+        ]);
+        if ($blockedMuteCheck) {
+            $muteCheck = $blockedMuteCheck;
+        }
+    }
+    
     $isMuted = $muteCheck ? true : false;
 
     $chats[] = [

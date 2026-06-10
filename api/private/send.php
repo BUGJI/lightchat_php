@@ -58,7 +58,8 @@ if (!$toUser) {
     json_response(404, ['error' => 'not_found', 'message' => '接收方用户不存在']);
 }
 
-// ── 检查黑名单 ──
+// ── 检查黑名单和静音 ──
+// 1. 检查接收方是否将发送方加入黑名单（双向检查）
 $blacklistCheck = $db->get('user_relations', [
     'user_id' => $toUserId,
     'target_user_id' => $user['id'],
@@ -66,6 +67,16 @@ $blacklistCheck = $db->get('user_relations', [
 ]);
 if ($blacklistCheck) {
     json_response(403, ['error' => 'blocked_by_user', 'message' => '您已被对方加入黑名单，无法发送消息']);
+}
+
+// 2. 检查发送方是否将接收方加入黑名单（防止绕过）
+$selfBlacklistCheck = $db->get('user_relations', [
+    'user_id' => $user['id'],
+    'target_user_id' => $toUserId,
+    'relation_type' => 'blacklist',
+]);
+if ($selfBlacklistCheck) {
+    json_response(403, ['error' => 'you_blocked_user', 'message' => '您将对方加入了黑名单，无法发送消息']);
 }
 
 // ── 敏感词过滤 ──
@@ -135,13 +146,26 @@ try {
         if ($toUserFull) {
             // 检查用户是否开启了私信通知
             if (!isset($toUserFull['notification_private_enabled']) || (bool)$toUserFull['notification_private_enabled']) {
-                // 检查发送方是否被屏蔽通知
+                // 检查发送方是否被屏蔽通知（支持好友和非好友两种情况）
                 $muteCheck = $db->get('user_relations', [
                     'user_id' => $toUserId,
                     'target_user_id' => $user['id'],
                     'relation_type' => 'friend',
                     'mute_notifications' => 1,
                 ]);
+                
+                // 如果不是好友，也检查一下是否有单独的屏蔽记录（blocked 类型）
+                if (!$muteCheck) {
+                    $blockedCheck = $db->get('user_relations', [
+                        'user_id' => $toUserId,
+                        'target_user_id' => $user['id'],
+                        'relation_type' => 'blocked',
+                        'mute_notifications' => 1,
+                    ]);
+                    if ($blockedCheck) {
+                        $muteCheck = $blockedCheck;
+                    }
+                }
                 
                 // 如果未被屏蔽，则发送通知
                 if (!$muteCheck) {
