@@ -143,6 +143,10 @@ class LocalDriver implements DatabaseDriverInterface {
             }
             return 0;
         }
+        // 忽略 CREATE INDEX 语句（本地文件存储不需要索引）
+        if (preg_match('/CREATE INDEX/i', $sql)) {
+            return 0;
+        }
         throw new Exception("LocalDriver: Execute only supports CREATE TABLE");
     }
     
