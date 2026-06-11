@@ -278,6 +278,10 @@ class LocalDriver implements DatabaseDriverInterface {
         return true;
     }
     
+    public function inTransaction() {
+        return $this->inTransaction;
+    }
+    
     public function lastInsertId() {
         return $this->lastId;
     }

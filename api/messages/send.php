@@ -89,36 +89,54 @@ if ($cooldownSeconds > 0 && !role_at_least($user['role'], 'admin')) {
 // ── 敏感词过滤 ──
 $content = filter_sensitive_words($content);
 
-// ── 处理 @ 列表（格式化为字符串存储） ──
-$mentionedStr = null;
+// ── 处理 @ 列表（存储到 message_mentions 表） ──
+$mentionedUserIds = [];
 if (is_array($mentionedUsers) && count($mentionedUsers) > 0) {
     $maxMentions = isset($config['message']['mention']['max_mentions']) ? (int)$config['message']['mention']['max_mentions'] : 10;
-    $mentionedUsers = array_slice($mentionedUsers, 0, $maxMentions);
-    $mentionedStr = implode(',', array_map('intval', $mentionedUsers));
+    $mentionedUserIds = array_slice($mentionedUsers, 0, $maxMentions);
 }
 
 // ── 存储消息 ──
 try {
+    $db->beginTransaction();
+    
     $messageData = [
-        'channel_id'      => $channelId,
-        'user_id'         => $user['id'],
-        'parent_id'       => $parentId,
-        'type'            => $type,
-        'content'         => $content,
-        'mentioned_users' => $mentionedStr,
+        'channel_id' => $channelId,
+        'user_id'    => $user['id'],
+        'parent_id'  => $parentId > 0 ? $parentId : null,
+        'type'       => $type,
+        'content'    => $content,
     ];
-
+    
+    $messageId = $db->insert('messages', $messageData);
+    
+    // 存储文件附件（如果有）
     if ($fileId !== null && $fileId > 0) {
         $upload = $db->get('uploads', ['id' => $fileId, 'user_id' => $user['id']]);
         if ($upload) {
-            $messageData['file_url']  = $upload['file_path'] ?? '';
-            $messageData['file_size'] = $upload['file_size'] ?? 0;
+            $attachmentData = [
+                'message_id' => $messageId,
+                'file_url'   => $upload['file_path'] ?? '',
+                'file_size'  => $upload['file_size'] ?? 0,
+                'file_type'  => $upload['file_type'] ?? '',
+            ];
+            $db->insert('message_attachments', $attachmentData);
             // 关联文件到消息
-            $db->update('uploads', ['message_id' => null], ['id' => $fileId]);
+            $db->update('uploads', ['message_id' => $messageId], ['id' => $fileId]);
         }
     }
-
-    $messageId = $db->insert('messages', $messageData);
+    
+    // 存储 @提及关系（如果有）
+    if (!empty($mentionedUserIds)) {
+        foreach ($mentionedUserIds as $mentionedUserId) {
+            $db->insert('message_mentions', [
+                'message_id' => $messageId,
+                'user_id'    => (int)$mentionedUserId,
+            ]);
+        }
+    }
+    
+    $db->commit();
 
     // ── 触发离线通知（接收消息时检查） ──
     require_once __DIR__ . '/../../notifications/NotificationManager.php';
@@ -153,6 +171,9 @@ try {
         }
     }
 } catch (Exception $e) {
+    if ($db->getDriver()->inTransaction()) {
+        $db->rollback();
+    }
     json_response(500, ['error' => 'send_failed', 'message' => '消息发送失败']);
 }
 

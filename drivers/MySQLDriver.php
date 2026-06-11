@@ -137,6 +137,10 @@ class MySQLDriver implements DatabaseDriverInterface {
         return $this->connection->rollback();
     }
     
+    public function inTransaction() {
+        return $this->connection->inTransaction();
+    }
+    
     public function lastInsertId() {
         return $this->lastInsertId;
     }

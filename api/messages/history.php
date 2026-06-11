@@ -110,27 +110,75 @@ foreach (array_keys($userIds) as $uid) {
     }
 }
 
-// ── 格式化消息（附上用户信息） ──
+// ── 格式化消息（附上用户信息、附件和提及） ──
+$messageIds = array_column($filteredMsgs, 'id');
+$attachmentsMap = [];
+if (!empty($messageIds)) {
+    foreach ($messageIds as $mid) {
+        $attachmentsMap[$mid] = [];
+    }
+    // 批量获取附件
+    $attachments = $db->select('message_attachments', [], '*', '', 0);
+    foreach ($attachments as $att) {
+        $mid = (int)$att['message_id'];
+        if (isset($attachmentsMap[$mid])) {
+            $attachmentsMap[$mid][] = [
+                'file_url'  => $att['file_url'],
+                'file_size' => (int)$att['file_size'],
+                'file_type' => $att['file_type'] ?? '',
+            ];
+        }
+    }
+}
+
+// 批量获取 @提及
+$mentionsMap = [];
+if (!empty($messageIds)) {
+    foreach ($messageIds as $mid) {
+        $mentionsMap[$mid] = [];
+    }
+    $mentions = $db->select('message_mentions', [], '*', '', 0);
+    foreach ($mentions as $mention) {
+        $mid = (int)$mention['message_id'];
+        if (isset($mentionsMap[$mid])) {
+            $mentionsMap[$mid][] = (int)$mention['user_id'];
+        }
+    }
+}
+
 $messages = [];
 foreach ($filteredMsgs as $msg) {
     $sender = isset($userCache[(int)$msg['user_id']]) ? $userCache[(int)$msg['user_id']] : null;
-
-    $messages[] = [
-        'id'              => (int)$msg['id'],
-        'channel_id'      => (int)$msg['channel_id'],
-        'user_id'         => (int)$msg['user_id'],
-        'username'        => $sender ? $sender['username'] : '系统',
-        'avatar'          => $sender ? $sender['avatar'] : null,
-        'role'            => $sender ? $sender['role'] : null,
-        'parent_id'       => isset($msg['parent_id']) ? (int)$msg['parent_id'] : 0,
-        'type'            => $msg['type'] ?? 'text',
-        'content'         => $msg['content'] ?? '',
-        'file_url'        => $msg['file_url'] ?? null,
-        'file_size'       => isset($msg['file_size']) ? (int)$msg['file_size'] : null,
-        'mentioned_users' => $msg['mentioned_users'] ?? null,
-        'is_deleted'      => isset($msg['is_deleted']) ? (int)$msg['is_deleted'] : 0,
-        'created_at'      => $msg['created_at'] ?? '',
+    $mid = (int)$msg['id'];
+    
+    $messageData = [
+        'id'         => $mid,
+        'channel_id' => (int)$msg['channel_id'],
+        'user_id'    => (int)$msg['user_id'],
+        'username'   => $sender ? $sender['username'] : '系统',
+        'avatar'     => $sender ? $sender['avatar'] : null,
+        'role'       => $sender ? $sender['role'] : null,
+        'parent_id'  => isset($msg['parent_id']) ? (int)$msg['parent_id'] : null,
+        'type'       => $msg['type'] ?? 'text',
+        'content'    => $msg['content'] ?? '',
+        'attachments'=> $attachmentsMap[$mid] ?? [],
+        'mentioned_users' => $mentionsMap[$mid] ?? [],
+        'is_deleted' => isset($msg['is_deleted']) ? (int)$msg['is_deleted'] : 0,
+        'is_edited'  => isset($msg['is_edited']) ? (int)$msg['is_edited'] : 0,
+        'created_at' => $msg['created_at'] ?? '',
+        'edited_at'  => $msg['edited_at'] ?? null,
     ];
+    
+    // 兼容旧格式：如果有单个 file_url，也放入 attachments
+    if (!empty($msg['file_url'])) {
+        $messageData['attachments'][] = [
+            'file_url'  => $msg['file_url'],
+            'file_size' => isset($msg['file_size']) ? (int)$msg['file_size'] : null,
+            'file_type' => '',
+        ];
+    }
+    
+    $messages[] = $messageData;
 }
 
 json_success([
