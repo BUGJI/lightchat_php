@@ -129,16 +129,59 @@ notification_mode VARCHAR(20) DEFAULT 'none',
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 channel_id INTEGER NOT NULL,
                 user_id INTEGER NOT NULL,
-                parent_id INTEGER DEFAULT 0,
+                parent_id INTEGER DEFAULT NULL,
                 type VARCHAR(20) DEFAULT 'text',
                 content TEXT,
+                is_deleted TINYINT DEFAULT 0,
+                is_edited TINYINT DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                edited_at TIMESTAMP DEFAULT NULL
+            )
+        ");
+        
+        // 创建消息附件表（分离文件信息，减少主表冗余）
+        $this->driver->execute("
+            CREATE TABLE IF NOT EXISTS message_attachments (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                message_id INTEGER NOT NULL,
                 file_url VARCHAR(500),
                 file_size INTEGER,
-                mentioned_users TEXT,
-                is_deleted TINYINT DEFAULT 0,
+                file_type VARCHAR(50),
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                INDEX idx_channel_time (channel_id, created_at)
+                FOREIGN KEY (message_id) REFERENCES messages(id)
             )
+        ");
+        
+        // 创建消息 @提及表（规范化存储提及关系）
+        $this->driver->execute("
+            CREATE TABLE IF NOT EXISTS message_mentions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                message_id INTEGER NOT NULL,
+                user_id INTEGER NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (message_id) REFERENCES messages(id),
+                UNIQUE(message_id, user_id)
+            )
+        ");
+        
+        // 为消息表创建索引（使用独立的 CREATE INDEX 语句，兼容 SQLite 和 MySQL）
+        $this->driver->execute("
+            CREATE INDEX IF NOT EXISTS idx_messages_channel_created ON messages(channel_id, created_at)
+        ");
+        $this->driver->execute("
+            CREATE INDEX IF NOT EXISTS idx_messages_channel_id ON messages(channel_id, id)
+        ");
+        $this->driver->execute("
+            CREATE INDEX IF NOT EXISTS idx_messages_user ON messages(user_id)
+        ");
+        $this->driver->execute("
+            CREATE INDEX IF NOT EXISTS idx_message_attachments_message ON message_attachments(message_id)
+        ");
+        $this->driver->execute("
+            CREATE INDEX IF NOT EXISTS idx_message_mentions_message ON message_mentions(message_id)
+        ");
+        $this->driver->execute("
+            CREATE INDEX IF NOT EXISTS idx_message_mentions_user ON message_mentions(user_id)
         ");
         
         // 创建私聊会话表

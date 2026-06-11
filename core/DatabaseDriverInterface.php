@@ -99,6 +99,12 @@ interface DatabaseDriverInterface {
      * 回滚事务
      */
     public function rollback();
+
+    /**
+     * 检查是否在事务中
+     * @return bool
+     */
+    public function inTransaction();
     
     /**
      * 获取最后插入ID
