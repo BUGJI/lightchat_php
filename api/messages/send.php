@@ -113,43 +113,58 @@ try {
         if ($upload) {
             $messageData['file_url']  = $upload['file_path'] ?? '';
             $messageData['file_size'] = $upload['file_size'] ?? 0;
-            // 关联文件到消息
-            $db->update('uploads', ['message_id' => null], ['id' => $fileId]);
         }
     }
 
     $messageId = $db->insert('messages', $messageData);
 
+    // 关联文件到消息（消息插入成功后再更新归属）
+    if ($fileId !== null && $fileId > 0) {
+        $db->update('uploads', ['message_id' => $messageId], ['id' => $fileId]);
+    }
+
     // ── 触发离线通知（接收消息时检查） ──
     require_once __DIR__ . '/../../notifications/NotificationManager.php';
     $notifConfig = $config['notifications'] ?? [];
     $offlineCfg = $notifConfig['offline_notify'] ?? [];
-    if (($offlineCfg['enabled'] ?? true) && ($config['notifications']['methods'] ?? [])) {
-        // 获取频道内其他成员
+    // 仅当至少有一种通知方式被显式启用时才走通知逻辑，避免空转
+    $enabledMethods = [];
+    foreach (($notifConfig['methods'] ?? []) as $methodName => $methodCfg) {
+        if (!empty($methodCfg['enabled'])) {
+            $enabledMethods[$methodName] = $methodCfg;
+        }
+    }
+    if (($offlineCfg['enabled'] ?? true) && $enabledMethods) {
+        // 获取频道内其他成员（批量查询一次，避免循环内逐个查库）
         $members = $db->select('channel_members', ['channel_id' => $channelId], 'user_id');
         $memberIds = array_column($members, 'user_id');
-        
-        foreach ($memberIds as $memberId) {
-            if ($memberId == $user['id']) continue; // 跳过发送者
-            
-            $member = $db->get('users', ['id' => $memberId]);
-            if (!$member) continue;
-            
-            // 检查用户是否开启了群通知
-            if (isset($member['notification_group_enabled']) && !(bool)$member['notification_group_enabled']) {
-                continue; // 用户关闭了群通知
+        $memberIds = array_filter($memberIds, function ($id) use ($user) {
+            return (int)$id !== (int)$user['id'];
+        });
+
+        $notifMgr = null;
+        if (!empty($memberIds)) {
+            // 批量取成员用户信息
+            $memberRows = $db->select('users', ['id' => $memberIds]);
+            foreach ($memberRows as $member) {
+                // 检查用户是否开启了群通知
+                if (isset($member['notification_group_enabled']) && !(bool)$member['notification_group_enabled']) {
+                    continue; // 用户关闭了群通知
+                }
+
+                $messageDataForNotif = [
+                    'nickname'         => $user['username'] ?? $user['nickname'] ?? '未知用户',
+                    'unread_count'     => 1,
+                    'messages_preview' => mb_substr($content, 0, 100, 'UTF-8'),
+                    'sender_name'      => $user['username'] ?? $user['nickname'] ?? '未知用户',
+                    'last_message_time'=> date('Y-m-d H:i:s'),
+                    'channel_name'     => $channel['name'] ?? '频道',
+                ];
+                if ($notifMgr === null) {
+                    $notifMgr = new NotificationManager($enabledMethods);
+                }
+                $notifMgr->sendIfOffline($member, $messageDataForNotif, $offlineCfg['offline_threshold_minutes'] ?? 10);
             }
-            
-            $notifMgr = new NotificationManager($notifConfig['methods'] ?? []);
-            $messageDataForNotif = [
-                'nickname'         => $user['username'] ?? $user['nickname'] ?? '未知用户',
-                'unread_count'     => 1,
-                'messages_preview' => mb_substr($content, 0, 100, 'UTF-8'),
-                'sender_name'      => $user['username'] ?? $user['nickname'] ?? '未知用户',
-                'last_message_time'=> date('Y-m-d H:i:s'),
-                'channel_name'     => $channel['name'] ?? '频道',
-            ];
-            $notifMgr->sendIfOffline($member, $messageDataForNotif, $offlineCfg['offline_threshold_minutes'] ?? 10);
         }
     }
 } catch (Exception $e) {

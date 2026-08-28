@@ -422,8 +422,9 @@ return [
         ],
         
         // 速率限制（基于IP或用户）
+        // 注意：实际限流由 security.ip_rate_limit 实现（bootstrap 执行），此配置为接口级预留
         'rate_limit' => [
-            'enabled' => true,
+            'enabled' => false,                       // 已委托给 security.ip_rate_limit
             'requests_per_minute' => 60,              // 每分钟最多请求数
             'requests_per_hour' => 1000,              // 每小时最多请求数
             'burst_multiplier' => 2,                  // 突发请求倍数
@@ -612,7 +613,7 @@ return [
         // 每一种通知方式一个键，enabled 控制是否启用该方式
         'methods' => [
             'email' => [
-                'enabled' => true,
+                'enabled' => false,                  // 默认关闭：SMTP 为占位配置，启用前请填写真实 SMTP
                 'label'   => '邮件通知',
                 'smtp' => [
                     'host'     => 'smtp.example.com',
@@ -639,7 +640,7 @@ return [
             ],
 
             'pushplus' => [
-                'enabled' => true,
+                'enabled' => false,                  // 默认关闭：启用前请填写真实 PushPlus Token
                 'label'   => 'PushPlus',
                 'api_url' => 'https://www.pushplus.plus/send',
                 'channel' => 'wechat',                 // wechat / sms / mail / webhook
@@ -657,7 +658,7 @@ return [
             ],
 
             'webhook' => [
-                'enabled' => true,
+                'enabled' => false,                  // 默认关闭：启用前请配置用户级 Webhook URL
                 'label'   => 'Webhook',
                 'timeout' => 10,
                 'templates' => [

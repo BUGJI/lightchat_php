@@ -118,6 +118,7 @@ notification_mode VARCHAR(20) DEFAULT 'none',
                 channel_id INTEGER NOT NULL,
                 user_id INTEGER NOT NULL,
                 role VARCHAR(20) DEFAULT 'member',
+                last_read_message_id INTEGER DEFAULT 0,
                 joined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE(channel_id, user_id)
             )

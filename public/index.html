@@ -164,6 +164,49 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC'
 ::-webkit-scrollbar-track { background:transparent; }
 ::-webkit-scrollbar-thumb { background:rgba(0,0,0,.15); border-radius:3px; }
 ::-webkit-scrollbar-thumb:hover { background:rgba(0,0,0,.25); }
+
+/* ── 暗色模式 ── */
+[data-theme="dark"] {
+  --bg: #1a1d21;
+  --sidebar-bg: #23272d;
+  --sidebar-text: #e6e9ec;
+  --sidebar-hover: #2f343b;
+  --sidebar-active: #17a98c;
+  --msg-bg: #2a2e35;
+  --msg-self: #174e43;
+  --border: #3a4048;
+  --text: #d7dce1;
+  --text-light: #8a9199;
+  --danger: #e05d4c;
+  --primary: #22c9a8;
+  --primary-dark: #17a98c;
+  --input-bg: #262a30;
+  --shadow: 0 2px 12px rgba(0,0,0,.35);
+}
+[data-theme="dark"] body { background: var(--bg); color: var(--text); }
+[data-theme="dark"] .auth-card { background:#2a2e35; box-shadow:var(--shadow); }
+[data-theme="dark"] .auth-card label,
+[data-theme="dark"] .modal label { color:#aab2ba; }
+[data-theme="dark"] .auth-card input,
+[data-theme="dark"] .modal input,
+[data-theme="dark"] .modal select,
+[data-theme="dark"] .modal textarea { background:var(--input-bg); border-color:var(--border); color:var(--text); }
+[data-theme="dark"] .main-header { background:#23272d; border-bottom-color:var(--border); box-shadow:none; }
+[data-theme="dark"] .input-area { background:#23272d; border-top-color:var(--border); }
+[data-theme="dark"] .input-area textarea,
+[data-theme="dark"] .typing-hint { background:var(--input-bg); color:var(--text); border-color:var(--border); }
+[data-theme="dark"] .modal { background:#2a2e35; box-shadow:0 8px 40px rgba(0,0,0,.5); }
+[data-theme="dark"] .modal .btn-row .btn-cancel { background:#3a4048; color:#c6ccd2; }
+[data-theme="dark"] .notif-cond { background:#23272d; border-color:#3a4048; }
+[data-theme="dark"] .msg.system .bubble { background:rgba(255,255,255,.06); }
+[data-theme="dark"] .msg .bubble { box-shadow:0 1px 3px rgba(0,0,0,.25); }
+[data-theme="dark"] .message-area .welcome h2 { color:#aab2ba; }
+[data-theme="dark"] .message-area .welcome p { color:#6f767d; }
+[data-theme="dark"] ::-webkit-scrollbar-thumb { background:rgba(255,255,255,.18); }
+[data-theme="dark"] ::-webkit-scrollbar-thumb:hover { background:rgba(255,255,255,.28); }
+[data-theme="dark"] .no-chat { color:#8a9199; }
+[data-theme="dark"] .msg .sender { color:#9fd8c9; }
+[data-theme="dark"] .msg .time { color:#6f767d; }
 </style>
 </head>
 <body>
@@ -177,7 +220,10 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC'
   <div class="sidebar" id="sidebar">
     <div class="sidebar-header">
       <h2>LightChat</h2>
-      <button class="settings-btn" id="settingsBtn" title="设置">⚙️</button>
+      <div style="display:flex;align-items:center;gap:2px">
+        <button class="settings-btn" id="themeToggleBtn" title="切换主题">🌙</button>
+        <button class="settings-btn" id="settingsBtn" title="设置">⚙️</button>
+      </div>
     </div>
     <div class="channel-scroll">
       <div class="sidebar-section">
@@ -495,12 +541,8 @@ async function loadPrivateChats() {
 
 async function sendPrivateMsg(toUserId, content, type, fileId) {
   const r = await post('/api/private/send.php', { to_user_id: toUserId, content, type: type || 'text', file_id: fileId || undefined });
-  // 刷新私聊列表
-  await loadPrivateChats();
-  // 如果当前在这个私聊里，加载历史
-  if (S.activeChat && S.activeChat.type === 'private' && S.activeChat.id === r.chat_id) {
-    await loadMessages();
-  }
+  // 刷新私聊列表（消息追加由调用方 appendLocalMessage 处理，避免全量重拉）
+  try { await loadPrivateChatsSilent(); } catch(e) {}
   return r;
 }
 
@@ -528,27 +570,82 @@ async function loadMessages() {
   renderMessages();
 }
 
+/* 本地追加一条消息到缓存并增量渲染（发送成功后调用，避免全量重拉） */
+function appendLocalMessage(m) {
+  if (!S.activeChat) return;
+  const cacheKey = S.activeChat.type + '_' + S.activeChat.id;
+  if (!S.messages[cacheKey]) S.messages[cacheKey] = [];
+  const list = S.messages[cacheKey];
+  // 去重
+  if (list.some(x => x.id === m.id)) return;
+  list.push(m);
+  if (m.id > S.lastPollId) S.lastPollId = m.id;
+  // 增量插入 DOM：若当前缓存就是当前聊天，追加一条消息节点
+  const messageArea = document.getElementById('messageArea');
+  const isCurrent = S.activeChat.type + '_' + S.activeChat.id === cacheKey;
+  const welcome = messageArea.querySelector('.welcome');
+  if (isCurrent) {
+    if (welcome) welcome.remove();
+    messageArea.insertAdjacentHTML('beforeend', renderMessageList([m]));
+    // 底部保持可见
+    if (messageArea.scrollTop + messageArea.clientHeight >= messageArea.scrollHeight - 120) {
+      scrollToBottom();
+    }
+  }
+}
+
 async function sendMessage(content) {
   if (!S.activeChat) return;
-  if (S.activeChat.type === 'channel') {
-    await post('/api/messages/send.php', { channel_id: S.activeChat.id, content });
+  const isPrivate = S.activeChat.type === 'private';
+  let r;
+  if (isPrivate) {
+    r = await sendPrivateMsg(S.activeChat.otherUserId, content);
   } else {
-    await sendPrivateMsg(S.activeChat.otherUserId, content);
+    r = await post('/api/messages/send.php', { channel_id: S.activeChat.id, content });
   }
-  await loadMessages();
+  // 乐观追加：直接把刚发的消息插入本地缓存，无需全量重拉
+  appendLocalMessage({
+    id: r.message_id,
+    channel_id: isPrivate ? undefined : S.activeChat.id,
+    user_id: S.user ? S.user.id : 0,
+    username: S.user ? S.user.username : '',
+    avatar: S.user ? S.user.avatar : null,
+    type: 'text',
+    content: r.content || content,
+    file_url: null,
+    created_at: localNowStr(),
+    private_chat_id: isPrivate ? S.activeChat.id : undefined,
+    from_user_id: isPrivate ? (S.user ? S.user.id : 0) : undefined,
+  });
   scrollToBottom();
 }
 
-async function sendFileMessage(fileId, fileType) {
+async function sendFileMessage(fileId, fileType, uploadData) {
   if (!S.activeChat) return;
   // 映射上传文件类型到消息类型: image 保留，其余统一为 file
   const type = (fileType === 'image') ? 'image' : 'file';
-  if (S.activeChat.type === 'channel') {
-    await post('/api/messages/send.php', { channel_id: S.activeChat.id, content: '', type, file_id: fileId });
+  const isPrivate = S.activeChat.type === 'private';
+  let r;
+  if (isPrivate) {
+    r = await sendPrivateMsg(S.activeChat.otherUserId, '', type, fileId);
   } else {
-    await sendPrivateMsg(S.activeChat.otherUserId, '', type, fileId);
+    r = await post('/api/messages/send.php', { channel_id: S.activeChat.id, content: '', type, file_id: fileId });
   }
-  await loadMessages();
+  // 乐观追加文件消息（file_url 直接来自上传响应，无需重新拉取）
+  appendLocalMessage({
+    id: r.message_id,
+    channel_id: isPrivate ? undefined : S.activeChat.id,
+    user_id: S.user ? S.user.id : 0,
+    username: S.user ? S.user.username : '',
+    avatar: S.user ? S.user.avatar : null,
+    type: type,
+    content: '',
+    file_url: uploadData ? (uploadData.file_url || null) : null,
+    file_size: uploadData ? (uploadData.file_size || 0) : 0,
+    created_at: localNowStr(),
+    private_chat_id: isPrivate ? S.activeChat.id : undefined,
+    from_user_id: isPrivate ? (S.user ? S.user.id : 0) : undefined,
+  });
   scrollToBottom();
 }
 
@@ -568,7 +665,12 @@ async function poll() {
   try {
     let url;
     if (S.activeChat.type === 'channel') {
-      url = '/api/messages/poll.php?channels=' + S.activeChat.id + '&since_id=' + S.lastPollId + '&timeout=15';
+      // 聚合轮询所有已加入频道（+ 当前可能未加入的公告/公开频道），确保任何频道的新消息都能收到
+      const allIds = [...S.joinedChannelIds];
+      const activeCid = S.activeChat.id;
+      if (!allIds.includes(activeCid)) allIds.push(activeCid);
+      const channelsParam = allIds.join(',');
+      url = '/api/messages/poll.php?channels=' + encodeURIComponent(channelsParam) + '&since_id=' + S.lastPollId + '&timeout=15';
     } else {
       url = '/api/messages/poll.php?private_chat_id=' + S.activeChat.id + '&since_id=' + S.lastPollId + '&timeout=15';
     }
@@ -578,22 +680,104 @@ async function poll() {
     const data = await res.json();
 
     if (data.messages && data.messages.length > 0) {
-      const cacheKey = S.activeChat.type + '_' + S.activeChat.id;
-      if (!S.messages[cacheKey]) S.messages[cacheKey] = [];
-      // 合并去重
-      const existingIds = new Set(S.messages[cacheKey].map(m => m.id));
+      // 分组：频道消息按 channel_id，私聊按 private_chat_id
+      const byChannel = {};
+      const byPrivate = {};
       for (const m of data.messages) {
-        if (!existingIds.has(m.id)) {
-          S.messages[cacheKey].push(m);
-          existingIds.add(m.id);
+        if (m.channel_id) {
+          (byChannel[m.channel_id] = byChannel[m.channel_id] || []).push(m);
+        } else if (m.private_chat_id) {
+          (byPrivate[m.private_chat_id] = byPrivate[m.private_chat_id] || []).push(m);
         }
       }
+
+      // 当前活跃聊天是频道：只对当前频道增量渲染；其他频道只缓存 + 未读数
+      if (S.activeChat.type === 'channel') {
+        const mine = byChannel[S.activeChat.id] || [];
+        if (mine.length > 0) {
+          const cacheKey = S.activeChat.type + '_' + S.activeChat.id;
+          if (!S.messages[cacheKey]) S.messages[cacheKey] = [];
+          const existingIds = new Set(S.messages[cacheKey].map(x => x.id));
+          const fresh = [];
+          for (const m of mine) {
+            if (!existingIds.has(m.id)) {
+              S.messages[cacheKey].push(m);
+              existingIds.add(m.id);
+              fresh.push(m);
+            }
+          }
+          if (fresh.length > 0) {
+            // 增量插入，不重绘整个列表
+            const messageArea = document.getElementById('messageArea');
+            if (messageArea.querySelector('.welcome')) messageArea.querySelector('.welcome').remove();
+            messageArea.insertAdjacentHTML('beforeend', renderMessageList(fresh));
+            if (messageArea.scrollTop + messageArea.clientHeight >= messageArea.scrollHeight - 120) {
+              scrollToBottom();
+            }
+          }
+        }
+        // 其他频道：缓存消息 + 未读数 +1
+        for (const cid of Object.keys(byChannel)) {
+          if (parseInt(cid, 10) === S.activeChat.id) continue;
+          const key = 'channel_' + cid;
+          if (!S.messages[key]) S.messages[key] = [];
+          const existingIds = new Set(S.messages[key].map(x => x.id));
+          for (const m of byChannel[cid]) {
+            if (!existingIds.has(m.id)) {
+              S.messages[key].push(m);
+              existingIds.add(m.id);
+            }
+          }
+          const ch = S.channels.find(c => c.id === parseInt(cid, 10));
+          if (ch) {
+            // poll 返回的都是 > since_id 的新消息且不含自己发的，全部计入未读
+            ch.unread_count = (ch.unread_count || 0) + byChannel[cid].length;
+          }
+        }
+      } else {
+        // 当前活跃聊天是私聊
+        const mine = byPrivate[S.activeChat.id] || [];
+        if (mine.length > 0) {
+          const cacheKey = S.activeChat.type + '_' + S.activeChat.id;
+          if (!S.messages[cacheKey]) S.messages[cacheKey] = [];
+          const existingIds = new Set(S.messages[cacheKey].map(x => x.id));
+          const fresh = [];
+          for (const m of mine) {
+            if (!existingIds.has(m.id)) {
+              S.messages[cacheKey].push(m);
+              existingIds.add(m.id);
+              fresh.push(m);
+            }
+          }
+          if (fresh.length > 0) {
+            const messageArea = document.getElementById('messageArea');
+            if (messageArea.querySelector('.welcome')) messageArea.querySelector('.welcome').remove();
+            messageArea.insertAdjacentHTML('beforeend', renderMessageList(fresh));
+            if (messageArea.scrollTop + messageArea.clientHeight >= messageArea.scrollHeight - 120) {
+              scrollToBottom();
+            }
+          }
+        }
+        // 其他私聊会话（当前没打开）：刷新列表拿未读数
+        for (const pcid of Object.keys(byPrivate)) {
+          if (parseInt(pcid, 10) === S.activeChat.id) continue;
+          const key = 'private_' + pcid;
+          if (!S.messages[key]) S.messages[key] = [];
+          const existingIds = new Set(S.messages[key].map(x => x.id));
+          for (const m of byPrivate[pcid]) {
+            if (!existingIds.has(m.id)) {
+              S.messages[key].push(m);
+              existingIds.add(m.id);
+            }
+          }
+        }
+      }
+
       S.lastPollId = data.latest_id || S.lastPollId;
-      renderMessages();
-      scrollToBottom();
+      renderSidebar();
     }
 
-    // 同时刷新私聊列表（检查新消息）
+    // 同时刷新私聊列表（检查新消息/未读数）
     try { await loadPrivateChatsSilent(); } catch(e) {}
 
   } catch(e) { /* 网络错误静默处理 */ }
@@ -613,16 +797,24 @@ function selectChannel(channelId) {
   const ch = S.channels.find(c => c.id === channelId);
   if (!ch) return;
   S.activeChat = { id: ch.id, type: 'channel', name: ch.display_name, channel: ch };
+  // 本地未读清零 + 记忆最后会话
+  ch.unread_count = 0;
+  localStorage.setItem('lc_last_chat', JSON.stringify({ type: 'channel', id: ch.id }));
   renderSidebar();
   renderMain();
   loadMessages();
   startPolling();
+  // 服务端标记已读（fire-and-forget，失败不阻塞）
+  if (S.joinedChannelIds.has(ch.id)) {
+    post('/api/channels/read.php', { channel_id: ch.id }).catch(() => {});
+  }
 }
 
 function selectPrivate(chatId) {
   const pc = S.privateChats.find(c => c.id === chatId);
   if (!pc) return;
   S.activeChat = { id: pc.id, type: 'private', name: pc.other_username, otherUserId: pc.other_user_id, pc };
+  localStorage.setItem('lc_last_chat', JSON.stringify({ type: 'private', id: pc.id }));
   renderSidebar();
   renderMain();
   loadMessages();
@@ -713,11 +905,11 @@ function renderMessageList(msgs) {
     // 文件
     if (m.file_url) {
       html += '<div class="file-attach">';
-      const fullUrl = m.file_url.startsWith('http') ? m.file_url : (API_BASE + m.file_url);
+      const fullUrl = safeFileUrl(m.file_url);
       if (m.file_url.match(/\.(jpg|jpeg|png|gif|webp)$/i)) {
-        html += '<img src="' + fullUrl + '" alt="" loading="lazy" onclick="event.stopPropagation();showImg(this.src)">';
+        html += '<img src="' + esc(fullUrl) + '" alt="" loading="lazy" onclick="event.stopPropagation();showImg(this.src)">';
       } else {
-        html += '<a href="' + fullUrl + '" target="_blank">📎 文件 (' + formatSize(m.file_size) + ')</a>';
+        html += '<a href="' + esc(fullUrl) + '" target="_blank" rel="noopener noreferrer">📎 文件 (' + formatSize(m.file_size) + ')</a>';
       }
       html += '</div>';
     }
@@ -734,9 +926,11 @@ function renderSidebar() {
   for (const ch of S.channels) {
     const active = S.activeChat && S.activeChat.type === 'channel' && S.activeChat.id === ch.id;
     const icon = ch.type === 'announcement' ? '📢' : (ch.type === 'private' ? '🔒' : '#');
+    const unread = (!active && ch.unread_count > 0) ? '<span class="unread">' + Math.min(ch.unread_count, 99) + '</span>' : '';
     chHtml += '<li class="' + (active ? 'active' : '') + '" onclick="selectChannel(' + ch.id + ')">' +
       icon + ' ' + esc(ch.display_name) +
       '<span class="badge">' + (S.joinedChannelIds.has(ch.id) ? '✓' : '') + '</span>' +
+      unread +
       '</li>';
   }
   channelList.innerHTML = chHtml;
@@ -846,6 +1040,17 @@ async function showApp() {
   await loadChannels();
   await loadPrivateChats();
   renderMain();
+  // 恢复上次会话（Fix 9）
+  try {
+    const last = JSON.parse(localStorage.getItem('lc_last_chat') || 'null');
+    if (last && last.type === 'private') {
+      const pc = S.privateChats.find(c => c.id === last.id);
+      if (pc) { selectPrivate(pc.id); return; }
+    } else if (last && last.type === 'channel') {
+      const ch = S.channels.find(c => c.id === last.id);
+      if (ch) { selectChannel(ch.id); return; }
+    }
+  } catch(e) { /* 解析失败则忽略 */ }
   // 默认选中第一个频道
   if (S.channels.length > 0) selectChannel(S.channels[0].id);
 }
@@ -1045,11 +1250,45 @@ function hideSearchUser() { document.getElementById('searchModal').style.display
 
 /* ── 辅助函数 ── */
 function esc(s) { if (!s) return ''; const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+function safeFileUrl(u) {
+  if (!u) return '';
+  // 只允许 http(s) 完整 URL；否则按相对路径拼接 API_BASE
+  if (/^https?:\/\//i.test(u)) return u;
+  // 防御：以非 / 开头的相对路径，禁止 javascript: 等危险协议
+  if (/^javascript:|^data:|^vbscript:/i.test(u)) return '';
+  return API_BASE + u;
+}
 function formatTime(t) { if (!t) return ''; const d = new Date(t.replace(' ', 'T') + '+08:00'); if (isNaN(d.getTime())) return t; return d.toLocaleString('zh-CN', { month:'short', day:'numeric', hour:'2-digit', minute:'2-digit' }); }
+/* 生成后端风格的时间串 Y-m-d H:i:s（本地时区），与 formatTime 解析兼容 */
+function localNowStr() {
+  const d = new Date();
+  const p = n => String(n).padStart(2, '0');
+  return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) + ' ' + p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());
+}
 function formatSize(bytes) { if (!bytes) return '0 B'; const u = ['B','KB','MB','GB']; let i = 0; let s = bytes; while(s >= 1024 && i < 3) { s /= 1024; i++; } return s.toFixed(1) + ' ' + u[i]; }
 function scrollToBottom() { const area = document.getElementById('messageArea'); setTimeout(() => { area.scrollTop = area.scrollHeight; }, 50); }
 
 /* ── 事件绑定 ── */
+/* ── 主题切换 ── */
+function applyTheme(theme) {
+  const dark = theme === 'dark';
+  document.documentElement.setAttribute('data-theme', dark ? 'dark' : 'light');
+  const btn = document.getElementById('themeToggleBtn');
+  if (btn) btn.textContent = dark ? '☀️' : '🌙';
+  localStorage.setItem('lc_theme', dark ? 'dark' : 'light');
+}
+function initTheme() {
+  const saved = localStorage.getItem('lc_theme');
+  if (saved) { applyTheme(saved); return; }
+  // 未设置过：跟随系统
+  applyTheme(window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+}
+document.getElementById('themeToggleBtn').onclick = () => {
+  const dark = document.documentElement.getAttribute('data-theme') === 'dark';
+  applyTheme(dark ? 'light' : 'dark');
+};
+initTheme();
+
 document.getElementById('settingsBtn').onclick = showSettings;
 document.getElementById('settingsCancel').onclick = hideSettings;
 document.getElementById('logoutBtn').onclick = () => { hideSettings(); logout(); };
@@ -1086,9 +1325,9 @@ document.getElementById('searchUserInput').oninput = async function() {
 
 async function startPrivateChat(userId, username) {
   hideSearchUser();
-  // 发送空消息不会触发，先尝试发一个打招呼（或者查找已有会话）
+  // 只查找/创建会话，不再自动发送"你好"消息
   try {
-    const r = await sendPrivateMsg(userId, '👋 你好！');
+    const r = await post('/api/private/create.php', { to_user_id: userId });
     await loadPrivateChats();
     selectPrivate(r.chat_id);
   } catch(e) { alert(e.message); }
@@ -1101,11 +1340,20 @@ document.getElementById('sendBtn').onclick = async () => {
   if (!content) return;
   input.value = '';
   input.style.height = 'auto';
-  try { await sendMessage(content); } catch(e) { alert(e.message); }
+  try { await sendMessage(content); } catch(e) {
+    // 发送失败：恢复内容到输入框，避免用户白打
+    input.value = content;
+    input.style.height = 'auto';
+    input.style.height = Math.min(input.scrollHeight, 120) + 'px';
+    input.focus();
+    alert(e.message);
+  }
 };
 
 // Enter 发送，Shift+Enter 换行
 document.getElementById('msgInput').onkeydown = function(e) {
+  // 中文/日文等 IME 组合输入时 Enter 是选词，不能发送
+  if (e.isComposing || e.keyCode === 229) return;
   if (e.key === 'Enter' && !e.shiftKey) {
     e.preventDefault();
     document.getElementById('sendBtn').click();
@@ -1124,7 +1372,7 @@ document.getElementById('fileInput').onchange = async function() {
   if (!file) return;
   try {
     const r = await uploadFile(file);
-    await sendFileMessage(r.file_id, r.file_type);
+    await sendFileMessage(r.file_id, r.file_type, r);
   } catch(e) { alert(e.message); }
   this.value = '';
 };

@@ -433,11 +433,11 @@ function renderMessages() {
 }
 
 function renderFileAttachment(m) {
-  const fullUrl = (m.file_url || '').startsWith('http') ? m.file_url : (API_BASE + (m.file_url || ''));
+  const fullUrl = safeFileUrl(m.file_url || '');
   if (/\.(jpg|jpeg|png|gif|webp)$/i.test(m.file_url || '')) {
-    return '<br><img src="' + fullUrl + '" alt="" style="max-height:150px;border-radius:8px;cursor:pointer" onclick="showImg(\'' + fullUrl + '\')">';
+    return '<br><img src="' + esc(fullUrl) + '" alt="" style="max-height:150px;border-radius:8px;cursor:pointer" onclick="showImg(\'' + esc(fullUrl) + '\')">';
   }
-  return '<br><a href="' + fullUrl + '" target="_blank" style="color:#4a90e2;font-size:13px">📎 ' + (m.file_size ? formatSize(m.file_size) : '文件') + '</a>';
+  return '<br><a href="' + esc(fullUrl) + '" target="_blank" rel="noopener noreferrer" style="color:#4a90e2;font-size:13px">📎 ' + (m.file_size ? formatSize(m.file_size) : '文件') + '</a>';
 }
 
 // ── 发送消息 ──
@@ -560,6 +560,12 @@ document.addEventListener('DOMContentLoaded', () => {
 
 // ── 工具函数 ──
 function esc(s) { if (!s) return ''; const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+function safeFileUrl(u) {
+  if (!u) return '';
+  if (/^https?:\/\//i.test(u)) return u;
+  if (/^javascript:|^data:|^vbscript:/i.test(u)) return '';
+  return API_BASE + u;
+}
 function formatSize(b) { if (!b) return '0B'; const u = ['B','KB','MB','GB']; let i=0, s=b; while(s>=1024&&i<3){s/=1024;i++;} return s.toFixed(1)+' '+u[i]; }
 function showImg(url) { document.getElementById('imgViewerImg').src = url; document.getElementById('imgViewer').style.display = 'block'; }
 function hideImg() { document.getElementById('imgViewer').style.display = 'none'; }

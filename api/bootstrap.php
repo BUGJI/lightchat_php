@@ -25,9 +25,25 @@ header('Content-Type: application/json; charset=utf-8');
 // ── CORS ──
 $corsCfg = isset($config['api']['cors']) ? $config['api']['cors'] : [];
 $allowedMethods = isset($corsCfg['allowed_methods']) ? implode(', ', $corsCfg['allowed_methods']) : 'GET, POST, OPTIONS';
-header('Access-Control-Allow-Origin: *');
+$allowedOrigins = isset($corsCfg['allowed_origins']) ? $corsCfg['allowed_origins'] : ['*'];
+
+// 按配置限制来源：配置为 ['*'] 时放开；否则仅放行白名单内的 Origin
+$allowOrigin = '*';
+if (!in_array('*', $allowedOrigins, true)) {
+    $origin = isset($_SERVER['HTTP_ORIGIN']) ? trim($_SERVER['HTTP_ORIGIN']) : '';
+    if ($origin !== '' && in_array($origin, $allowedOrigins, true)) {
+        $allowOrigin = $origin;
+    } else {
+        // 不在白名单的来源：不允许跨域（非浏览器请求没有 Origin，保持同源可用）
+        $allowOrigin = '';
+    }
+}
+if ($allowOrigin !== '') {
+    header('Access-Control-Allow-Origin: ' . $allowOrigin);
+    header('Vary: Origin');
+}
 header('Access-Control-Allow-Methods: ' . $allowedMethods);
-header('Access-Control-Allow-Headers: Content-Type, Authorization, X-Requested-With');
+header('Access-Control-Allow-Headers: Content-Type, Authorization, X-Requested-With, X-Bot-Key');
 
 if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
     http_response_code(200);
@@ -147,6 +163,28 @@ function xss_clean($str) {
 }
 
 /**
+ * 获取敏感词列表（静态缓存，同一进程内只读一次文件）
+ * @return array
+ */
+function get_sensitive_words() {
+    global $config;
+    $wordsFile = isset($config['message']['sensitive_words_file'])
+        ? $config['message']['sensitive_words_file']
+        : __DIR__ . '/../sensitive_words.txt';
+
+    static $cache = null;
+    static $cacheFile = '';
+    if ($cache === null || $cacheFile !== $wordsFile) {
+        $cacheFile = $wordsFile;
+        $cache = [];
+        if (file_exists($wordsFile)) {
+            $cache = file($wordsFile, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
+        }
+    }
+    return $cache;
+}
+
+/**
  * 敏感词过滤：将敏感词替换为 ***
  */
 function filter_sensitive_words($content) {
@@ -155,15 +193,8 @@ function filter_sensitive_words($content) {
     if (!$enabled) {
         return $content;
     }
-    $wordsFile = isset($config['message']['sensitive_words_file'])
-        ? $config['message']['sensitive_words_file']
-        : __DIR__ . '/../sensitive_words.txt';
 
-    if (!file_exists($wordsFile)) {
-        return $content;
-    }
-    $words = file($wordsFile, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
-    foreach ($words as $word) {
+    foreach (get_sensitive_words() as $word) {
         $word = trim($word);
         if ($word !== '') {
             $content = str_ireplace($word, '***', $content);
@@ -247,6 +278,9 @@ function authenticate() {
     // 更新最后活跃时间
     $db->update('users', ['last_active_at' => date('Y-m-d H:i:s')], ['id' => $user['id']]);
 
+    // 自动续期（所有走 authenticate 的接口统一生效）
+    maybe_refresh_token($session, $user);
+
     // 不暴露密码哈希
     unset($user['password']);
     return $user;
@@ -306,3 +340,77 @@ function maybe_refresh_token($session, $user) {
         header('X-Token-Expires: ' . $newExpires);
     }
 }
+
+/**
+ * IP 速率限制（基于文件计数窗口）
+ * 使用 config['security']['ip_rate_limit'] 配置
+ */
+function apply_ip_rate_limit() {
+    global $config;
+    $cfg = isset($config['security']['ip_rate_limit']) ? $config['security']['ip_rate_limit'] : [];
+    if (empty($cfg['enabled'])) {
+        return;
+    }
+
+    $ip = isset($_SERVER['REMOTE_ADDR']) ? $_SERVER['REMOTE_ADDR'] : '';
+    if ($ip === '') {
+        return;
+    }
+
+    $limit = isset($cfg['requests_per_minute']) ? (int)$cfg['requests_per_minute'] : 120;
+    if ($limit <= 0) {
+        return;
+    }
+
+    // 本地文件存储（虚拟主机友好）
+    $dir = isset($config['database']['default']['local']['data_path'])
+        ? rtrim($config['database']['default']['local']['data_path'], '/') . '/rate_limit'
+        : __DIR__ . '/../data/rate_limit';
+    if (!is_dir($dir)) {
+        @mkdir($dir, 0755, true);
+    }
+
+    $file = $dir . '/' . md5($ip) . '.json';
+    $now = time();
+    $windowStart = $now - 60;
+
+    // 读-改-写放入 flock 临界区，保证并发安全
+    $fp = @fopen($file, 'c+');
+    if ($fp) {
+        @flock($fp, LOCK_EX);
+
+        $content = stream_get_contents($fp);
+        $count = 0;
+        if ($content !== false && $content !== '') {
+            $saved = @json_decode($content, true);
+            if (is_array($saved) && isset($saved['window']) && $saved['window'] === $windowStart) {
+                $count = (int)$saved['count'];
+            }
+        }
+
+        if ($count >= $limit) {
+            @flock($fp, LOCK_UN);
+            @fclose($fp);
+            // 超限：返回 429；可选封禁
+            $banOnExceed = isset($cfg['ban_on_exceed']) && $cfg['ban_on_exceed'];
+            if ($banOnExceed) {
+                $banDuration = isset($cfg['ban_duration_minutes']) ? (int)$cfg['ban_duration_minutes'] : 60;
+                $banFile = $dir . '/' . md5($ip) . '.ban';
+                @file_put_contents($banFile, json_encode(['until' => $now + $banDuration * 60]));
+            }
+            json_response(429, ['error' => 'rate_limited', 'message' => '请求过于频繁，请稍后再试']);
+        }
+
+        // 写入窗口计数
+        ftruncate($fp, 0);
+        rewind($fp);
+        fwrite($fp, json_encode(['window' => $windowStart, 'count' => $count + 1]));
+        fflush($fp);
+
+        @flock($fp, LOCK_UN);
+        @fclose($fp);
+    }
+}
+
+// ── 执行 IP 速率限制（放在最后，依赖上面的辅助函数） ──
+apply_ip_rate_limit();

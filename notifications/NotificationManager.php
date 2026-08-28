@@ -31,20 +31,23 @@ class NotificationManager
      */
     private function registerBuiltins()
     {
-        // 邮件
-        if (($this->config['email']['enabled'] ?? true)) {
+        // 邮件（只有显式 enabled 且配置了 SMTP 才注册，避免未配置时白白实例化）
+        if (($this->config['email']['enabled'] ?? false)) {
             $emailCfg = $this->config['email'] ?? [];
-            $this->notifiers['email'] = new EmailNotifier($emailCfg);
+            $smtp = isset($emailCfg['smtp']) ? $emailCfg['smtp'] : [];
+            if (!empty($smtp['host']) && !empty($smtp['username'])) {
+                $this->notifiers['email'] = new EmailNotifier($emailCfg);
+            }
         }
 
         // PushPlus
-        if (($this->config['pushplus']['enabled'] ?? true)) {
+        if (($this->config['pushplus']['enabled'] ?? false)) {
             $ppCfg = $this->config['pushplus'] ?? [];
             $this->notifiers['pushplus'] = new PushPlusNotifier($ppCfg);
         }
 
         // Webhook
-        if (($this->config['webhook']['enabled'] ?? true)) {
+        if (($this->config['webhook']['enabled'] ?? false)) {
             $whCfg = $this->config['webhook'] ?? [];
             $this->notifiers['webhook'] = new WebhookNotifier($whCfg);
         }

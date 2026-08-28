@@ -92,20 +92,13 @@ if ($contact !== '' && mb_strlen($contact, 'UTF-8') > 100) {
 $sensitiveEnabled = isset($config['message']['sensitive_words_enabled'])
     ? $config['message']['sensitive_words_enabled'] : false;
 if ($sensitiveEnabled) {
-    $wordsFile = isset($config['message']['sensitive_words_file'])
-        ? $config['message']['sensitive_words_file']
-        : __DIR__ . '/../../sensitive_words.txt';
-
-    if (file_exists($wordsFile)) {
-        $words = file($wordsFile, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
-        foreach ($words as $word) {
-            $word = trim($word);
-            if ($word !== '' && mb_stripos($username, $word) !== false) {
-                json_response(400, [
-                    'error'   => 'sensitive_word',
-                    'message' => '用户名包含敏感词汇',
-                ]);
-            }
+    foreach (get_sensitive_words() as $word) {
+        $word = trim($word);
+        if ($word !== '' && mb_stripos($username, $word) !== false) {
+            json_response(400, [
+                'error'   => 'sensitive_word',
+                'message' => '用户名包含敏感词汇',
+            ]);
         }
     }
 }

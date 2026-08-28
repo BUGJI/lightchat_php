@@ -75,12 +75,13 @@ while ($cycle <= $maxCycles) {
 
         // 获取每个频道的消息
         foreach ($visibleChannelIds as $cid) {
-            $allMsgs = $db->select('messages', ['channel_id' => $cid], '*', 'id DESC', 50);
+            $where = ['channel_id' => $cid];
+            if (!role_at_least($user['role'], 'admin')) {
+                $where['is_deleted != '] = 1;
+            }
+            $allMsgs = $db->select('messages', $where, '*', 'id DESC', 50);
             foreach ($allMsgs as $msg) {
                 if ((int)$msg['id'] > $sinceId && (int)$msg['user_id'] !== $user['id']) {
-                    // 跳过已删除
-                    if (isset($msg['is_deleted']) && (int)$msg['is_deleted'] === 1) continue;
-
                     // 附用户信息
                     $sender = $db->get('users', ['id' => $msg['user_id']]);
                     $newMessages[] = [

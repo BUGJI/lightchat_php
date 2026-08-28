@@ -52,47 +52,42 @@ if (!$isMember && $channel['type'] !== 'public') {
 // ── 获取消息 ──
 $where = ['channel_id' => $channelId];
 
-// 排除已删除消息（非管理员看不到）
+// 排除已删除消息（非管理员看不到；is_deleted=1 表示已删除）
 if (!role_at_least($user['role'], 'admin')) {
-    // 我们只要 is_deleted = 0 的消息
-    // LocalDriver 的 where 不支持 !=，在结果中过滤
+    $where['is_deleted != '] = 1;
 }
 
-// ── 获取消息（按 id ASC = 旧→新） ──
-$allMsgs = $db->select('messages', $where, '*', 'id ASC');
-$total = count($allMsgs);
+// ── 获取消息：id DESC 快速路径（LocalDriver 倒序提前终止，避免全量扫描） ──
+// 取 limit+1 条用于判断 has_more，再反转回 id ASC（旧→新）
+$msgs = $db->select('messages', $where, '*', 'id DESC', $limit + 1);
 
 if ($after > 0) {
-    // 获取 after 之后的新消息
+    // 获取 after 之后的新消息：先取足够大的 DESC 窗口再过滤
     $msgs = [];
-    foreach ($allMsgs as $m) {
-        if ((int)$m['id'] > $after) $msgs[] = $m;
+    $allRecent = $db->select('messages', $where, '*', 'id DESC', 200);
+    foreach ($allRecent as $m) {
+        if ((int)$m['id'] > $after) {
+            $msgs[] = $m;
+        }
     }
     $msgs = array_slice($msgs, 0, $limit + 1);
 } else {
-    // 默认：取最新的一批（末尾 $limit+1 条）
-    $start = max(0, $total - $limit - 1);
-    $msgs = array_slice($allMsgs, $start, $limit + 1);
+    // 默认：取最新的一批
+    $msgs = $db->select('messages', $where, '*', 'id DESC', $limit + 1);
 }
 
-// ── 过滤 & 分页处理 ──
+// ── 分页处理 ──
 $hasMore = count($msgs) > $limit;
 if ($hasMore) {
     array_pop($msgs); // 去掉多取的那条
 }
 
-// 过滤已删除消息
-$filteredMsgs = [];
-foreach ($msgs as $msg) {
-    if (isset($msg['is_deleted']) && (int)$msg['is_deleted'] === 1 && !role_at_least($user['role'], 'admin')) {
-        continue;
-    }
-    $filteredMsgs[] = $msg;
-}
+// 反转回 id ASC（旧→新），保持原响应顺序
+$msgs = array_reverse($msgs);
 
 // ── 组装用户信息（批量获取发消息的用户） ──
 $userIds = [];
-foreach ($filteredMsgs as $msg) {
+foreach ($msgs as $msg) {
     if ((int)$msg['user_id'] > 0) {
         $userIds[(int)$msg['user_id']] = true;
     }
@@ -112,7 +107,7 @@ foreach (array_keys($userIds) as $uid) {
 
 // ── 格式化消息（附上用户信息） ──
 $messages = [];
-foreach ($filteredMsgs as $msg) {
+foreach ($msgs as $msg) {
     $sender = isset($userCache[(int)$msg['user_id']]) ? $userCache[(int)$msg['user_id']] : null;
 
     $messages[] = [

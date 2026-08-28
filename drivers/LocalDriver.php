@@ -104,7 +104,15 @@ class LocalDriver implements DatabaseDriverInterface {
         
         $file = $this->dataPath . $table . '.json';
         $content = json_encode($this->tables[$table], JSON_PRETTY_PRINT);
-        file_put_contents($file, $content);
+
+        // 原子写：先写临时文件再 rename，避免写一半崩溃导致数据损坏
+        $tmp = $file . '.tmp.' . getmypid();
+        if (@file_put_contents($tmp, $content, LOCK_EX) === false) {
+            // 临时文件写入失败（只读/权限问题）时回退直接写
+            @file_put_contents($file, $content, LOCK_EX);
+        } else {
+            @rename($tmp, $file);
+        }
         
         // 更新缓存
         if ($this->cacheEnabled) {
@@ -222,7 +230,30 @@ class LocalDriver implements DatabaseDriverInterface {
     public function select($table, $where = [], $fields = '*', $order = '', $limit = 0) {
         $tableRef = &$this->getTable($table);
         $results = [];
-        
+
+        // 快速路径：id DESC/ASC + limit 时，data 数组按插入顺序即 id 递增，
+        // 直接从尾部/头部倒序遍历，提前终止，避免全量扫描 + usort
+        if ($limit > 0 && preg_match('/^id\s+(DESC|ASC)$/i', $order, $om)) {
+            $desc = strtoupper($om[1]) === 'DESC';
+            $count = count($tableRef['data']);
+            for ($i = 0; $i < $count && count($results) < $limit; $i++) {
+                $row = $tableRef['data'][$desc ? $count - 1 - $i : $i];
+                if ($this->matchesWhere($row, $where)) {
+                    if ($fields !== '*') {
+                        $selected = [];
+                        $fieldList = explode(',', $fields);
+                        foreach ($fieldList as $field) {
+                            $field = trim($field);
+                            $selected[$field] = $row[$field] ?? null;
+                        }
+                        $row = $selected;
+                    }
+                    $results[] = $row;
+                }
+            }
+            return $results;
+        }
+
         foreach ($tableRef['data'] as $row) {
             if ($this->matchesWhere($row, $where)) {
                 if ($fields !== '*') {
@@ -298,17 +329,35 @@ class LocalDriver implements DatabaseDriverInterface {
                     $operator = $matches[2];
                     $rowValue = $row[$field] ?? null;
                     
+                    // IN 支持：值为数组时判断包含
+                    if ($operator === '=' && is_array($value)) {
+                        if (!in_array($rowValue, $value)) return false;
+                        continue;
+                    }
+                    
                     switch ($operator) {
                         case '=': if ($rowValue != $value) return false; break;
                         case '>': if ($rowValue <= $value) return false; break;
                         case '<': if ($rowValue >= $value) return false; break;
                         case '>=': if ($rowValue < $value) return false; break;
                         case '<=': if ($rowValue > $value) return false; break;
-                        case '!=': if ($rowValue == $value) return false; break;
+                        case '!=':
+                            // 字段缺失（null）视为"不等于任何非 null 值"：
+                            // 避免宽松比较下 null==0 被误判为相等而排除
+                            if ($rowValue === null && $value !== null) {
+                                break; // 保留
+                            }
+                            if ($rowValue == $value) return false;
+                            break;
                     }
                 }
             } else {
-                if (($row[$key] ?? null) != $value) {
+                // IN 支持：值为数组时判断包含
+                if (is_array($value)) {
+                    if (!in_array($row[$key] ?? null, $value)) {
+                        return false;
+                    }
+                } elseif (($row[$key] ?? null) != $value) {
                     return false;
                 }
             }

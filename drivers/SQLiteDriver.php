@@ -159,18 +159,28 @@ class SQLiteDriver implements DatabaseDriverInterface {
     private function buildWhereClause($where) {
         $sql = [];
         $params = [];
-        
+        $idx = 0;
+
         foreach ($where as $key => $value) {
             if (strpos($key, ' ') !== false) {
-                $sql[] = $key;
-                $paramKey = preg_replace('/[^a-zA-Z0-9_]/', '', $key);
-                $params[$paramKey] = $value;
+                // 复杂条件，如 "id > :id" → 提取字段名与操作符，生成唯一参数名
+                if (preg_match('/^([a-zA-Z_][a-zA-Z0-9_]*)\s*(>=|<=|!=|=|>|<)\s*(?::[a-zA-Z0-9_]+)?$/', trim($key), $m)) {
+                    $field = $m[1];
+                    $op = $m[2];
+                    $paramName = 'w' . $idx . '_' . $field;
+                    $sql[] = "{$field} {$op} :{$paramName}";
+                    $params[$paramName] = $value;
+                    $idx++;
+                } else {
+                    // 无法解析的条件，原样保留（调用方保证安全）
+                    $sql[] = trim($key);
+                }
             } else {
                 $sql[] = "{$key} = :{$key}";
                 $params[$key] = $value;
             }
         }
-        
+
         return [
             'sql' => implode(' AND ', $sql),
             'params' => $params

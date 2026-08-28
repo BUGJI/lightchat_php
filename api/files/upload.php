@@ -80,7 +80,6 @@ if (empty($mimeType)) {
     $mimeMap = [
         'jpg'  => 'image/jpeg', 'jpeg' => 'image/jpeg', 'png'  => 'image/png',
         'gif'  => 'image/gif',  'webp' => 'image/webp', 'bmp'  => 'image/bmp',
-        'svg'  => 'image/svg+xml',
         'mp3'  => 'audio/mpeg', 'wav'  => 'audio/wav',  'ogg'  => 'audio/ogg',
         'mp4'  => 'video/mp4',  'webm' => 'video/webm',
         'pdf'  => 'application/pdf',
@@ -89,13 +88,21 @@ if (empty($mimeType)) {
         'txt'  => 'text/plain',
         'zip'  => 'application/zip',
     ];
-    $mimeType = isset($mimeMap[$ext]) ? $mimeMap[$ext] : 'application/octet-stream';
+    // SVG 不在白名单内（可内嵌脚本，虚拟主机静态服务场景有 XSS 风险），显式拒绝
+    if (isset($mimeMap[$ext])) {
+        $mimeType = $mimeMap[$ext];
+    } else {
+        $mimeType = 'application/octet-stream';
+    }
+}
+$extension = strtolower(pathinfo($file['name'], PATHINFO_EXTENSION));
+
+// ── 显式拒绝危险扩展名（SVG 可内嵌脚本） ──
+if (in_array($extension, ['svg', 'svgz', 'html', 'htm', 'php', 'phtml', 'shtml', 'jsp', 'asp', 'aspx', 'cgi', 'pl'], true)) {
+    json_response(400, ['error' => 'unsupported_type', 'message' => '不支持的文件类型（' . $extension . '）']);
 }
 
-$extension   = strtolower(pathinfo($file['name'], PATHINFO_EXTENSION));
 $fileSizeKb  = round($file['size'] / 1024);
-
-// ── 判断文件分类 ──
 $category   = 'file';
 $typeConfig = null;
 

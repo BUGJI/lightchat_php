@@ -35,11 +35,17 @@ $channels = $db->select('channels', [], '*', 'id ASC');
 
 // ── 统计成员数 & 当前用户是否已加入 ──
 $joinedChannelIds = [];
+$memberships = [];
 if ($user) {
     $memberships = $db->select('channel_members', ['user_id' => $user['id']]);
     foreach ($memberships as $m) {
         $joinedChannelIds[] = (int)$m['channel_id'];
     }
+}
+// 已加入频道的已读位置（channel_id => last_read_message_id）
+$lastReadMap = [];
+foreach ($memberships as $m) {
+    $lastReadMap[(int)$m['channel_id']] = isset($m['last_read_message_id']) ? (int)$m['last_read_message_id'] : 0;
 }
 
 $result = [];
@@ -53,6 +59,19 @@ foreach ($channels as $ch) {
         }
     }
 
+    // 未读数：当前用户已加入频道中，id 大于 last_read_message_id 的未删除消息数
+    $unreadCount = 0;
+    if ($user && isset($lastReadMap[(int)$ch['id']])) {
+        $where = [
+            'channel_id' => $ch['id'],
+            'id > :id'   => $lastReadMap[(int)$ch['id']],
+        ];
+        if (!role_at_least($user['role'], 'admin')) {
+            $where['is_deleted != '] = 1;
+        }
+        $unreadCount = $db->count('messages', $where);
+    }
+
     $result[] = [
         'id'            => (int)$ch['id'],
         'name'          => $ch['name'],
@@ -63,6 +82,7 @@ foreach ($channels as $ch) {
         'owner_id'      => isset($ch['owner_id']) ? (int)$ch['owner_id'] : 0,
         'member_count'  => $memberCount,
         'is_joined'     => $user ? in_array((int)$ch['id'], $joinedChannelIds) : false,
+        'unread_count'  => $unreadCount,
         'created_at'    => $ch['created_at'] ?? '',
     ];
 }
