@@ -101,19 +101,24 @@ try {
         'is_read'      => 0,
     ];
 
-    // 关联文件
+    // 关联文件（记录待关联的文件 ID，insert 消息后回填归属）
+    $attachFileId = null;
     if ($fileId !== null && $fileId > 0) {
         $upload = $db->get('uploads', ['id' => $fileId, 'user_id' => $user['id']]);
         if ($upload) {
             $messageData['file_url']  = $upload['file_path'] ?? '';
             $messageData['file_size'] = $upload['file_size'] ?? 0;
-            // 关联文件到消息
-            $db->update('uploads', ['message_id' => null], ['id' => $fileId]);
+            $attachFileId = (int)$fileId;
         }
     }
 
     // ── 存储私聊消息 ──
     $messageId = $db->insert('private_messages', $messageData);
+
+    // 文件归属：把上传记录关联到刚创建的消息（原代码置 null，方向反了）
+    if ($attachFileId !== null) {
+        $db->update('uploads', ['message_id' => $messageId], ['id' => $attachFileId]);
+    }
 
     // ── 触发离线通知（接收消息时检查） ──
     require_once __DIR__ . '/../../notifications/NotificationManager.php';
