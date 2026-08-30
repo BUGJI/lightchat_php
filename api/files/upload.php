@@ -133,6 +133,68 @@ if ($fileSizeKb > $maxSizeKb) {
     json_response(400, ['error' => 'file_too_large', 'message' => "文件不能超过 {$maxSizeKb} KB"]);
 }
 
+// ── 上传频率限制（per_minute / per_hour / per_day） ──
+$rlCfg = isset($config['upload']['rate_limit']) ? $config['upload']['rate_limit'] : [];
+$perMinute = (int)($rlCfg['per_minute'] ?? 0);
+$perHour   = (int)($rlCfg['per_hour'] ?? 0);
+$perDay    = (int)($rlCfg['per_day'] ?? 0);
+if ($perMinute > 0 || $perHour > 0 || $perDay > 0) {
+    $rlDir = isset($config['database']['default']['local']['data_path'])
+        ? rtrim($config['database']['default']['local']['data_path'], '/') . '/upload_limit'
+        : __DIR__ . '/../data/upload_limit';
+    if (!is_dir($rlDir)) {
+        @mkdir($rlDir, 0755, true);
+    }
+    $rlFile = $rlDir . '/u' . $user['id'] . '.json';
+
+    // 读-改-写放入 flock 临界区，保证并发安全
+    $fp = @fopen($rlFile, 'c+');
+    if ($fp) {
+        @flock($fp, LOCK_EX);
+        $now = time();
+        $stats = [
+            'minute_ts' => 0, 'minute_count' => 0,
+            'hour_ts'   => 0, 'hour_count'   => 0,
+            'day_ts'    => 0, 'day_count'    => 0,
+        ];
+        $content = stream_get_contents($fp);
+        if ($content !== false && $content !== '') {
+            $saved = @json_decode($content, true);
+            if (is_array($saved)) {
+                $stats = array_merge($stats, $saved);
+            }
+        }
+        // 窗口过期重置
+        if ($now - (int)$stats['minute_ts'] >= 60)  { $stats['minute_ts'] = $now; $stats['minute_count'] = 0; }
+        if ($now - (int)$stats['hour_ts']   >= 3600) { $stats['hour_ts']   = $now; $stats['hour_count']   = 0; }
+        if ($now - (int)$stats['day_ts']    >= 86400){ $stats['day_ts']    = $now; $stats['day_count']    = 0; }
+
+        if ($perMinute > 0 && (int)$stats['minute_count'] >= $perMinute) {
+            @flock($fp, LOCK_UN); @fclose($fp);
+            json_response(429, ['error' => 'upload_rate_limited', 'message' => "上传太频繁，请稍后再试（每分钟最多 {$perMinute} 次）"]);
+        }
+        if ($perHour > 0 && (int)$stats['hour_count'] >= $perHour) {
+            @flock($fp, LOCK_UN); @fclose($fp);
+            json_response(429, ['error' => 'upload_rate_limited', 'message' => "上传太频繁，请稍后再试（每小时最多 {$perHour} 次）"]);
+        }
+        if ($perDay > 0 && (int)$stats['day_count'] >= $perDay) {
+            @flock($fp, LOCK_UN); @fclose($fp);
+            json_response(429, ['error' => 'upload_rate_limited', 'message' => "上传太频繁，请稍后再试（每天最多 {$perDay} 次）"]);
+        }
+
+        // 预扣计数
+        $stats['minute_count']++;
+        $stats['hour_count']++;
+        $stats['day_count']++;
+        ftruncate($fp, 0);
+        rewind($fp);
+        fwrite($fp, json_encode($stats));
+        fflush($fp);
+        @flock($fp, LOCK_UN);
+        @fclose($fp);
+    }
+}
+
 // ── 存储文件 ──
 $storageCfg = isset($config['upload']['storage']) ? $config['upload']['storage'] : [];
 $uploadDir  = isset($storageCfg['local_path']) ? rtrim($storageCfg['local_path'], '/') : (__DIR__ . '/../uploads');

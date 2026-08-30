@@ -30,6 +30,95 @@ $password = $input['password'] ?? '';
 $email    = trim($input['email'] ?? '');
 $contact  = trim($input['contact'] ?? '');
 
+// ── Bot 自助注册（必须登录，记录创建者便于溯源） ──
+$accountType = trim($input['account_type'] ?? '');
+if ($accountType === 'bot') {
+    // 未登录直接 401（authenticate 内部处理）
+    $creator = authenticate();
+
+    $botCfg = isset($config['user']['bot']) ? $config['user']['bot'] : [];
+    if (empty($botCfg['allow_self_register'])) {
+        json_response(403, ['error' => 'bot_register_disabled', 'message' => '暂不支持自助注册 Bot']);
+    }
+    if (!has_permission($creator, 'user.bot.register') && !role_at_least($creator['role'], 'admin')) {
+        json_response(403, ['error' => 'forbidden', 'message' => '您没有注册 Bot 的权限']);
+    }
+
+    $botUsernameRaw = trim($input['username'] ?? '');
+    $botName        = trim($input['name'] ?? '');
+    if ($botUsernameRaw === '') {
+        json_response(400, ['error' => 'missing_username', 'message' => 'Bot 用户名不能为空']);
+    }
+
+    // 自动加 bot_ 前缀避免和普通用户冲突
+    $botUsername = 'bot_' . preg_replace('/[^a-zA-Z0-9_\x{4e00}-\x{9fa5}]/u', '', $botUsernameRaw);
+
+    // 长度校验（复用 config 用户名规则）
+    $uCfg = isset($config['user']['username']) ? $config['user']['username'] : [];
+    $uMin = isset($uCfg['min_length']) ? (int)$uCfg['min_length'] : 3;
+    $uMax = isset($uCfg['max_length']) ? (int)$uCfg['max_length'] : 20;
+    $uLen = mb_strlen($botUsername, 'UTF-8');
+    if ($uLen < $uMin || $uLen > $uMax) {
+        json_response(400, ['error' => 'invalid_username', 'message' => "Bot 用户名长度应为 {$uMin}-{$uMax} 个字符"]);
+    }
+
+    $existing = $db->get('users', ['username' => $botUsername]);
+    if ($existing) {
+        json_response(409, ['error' => 'duplicate_username', 'message' => '该 Bot 用户名已存在']);
+    }
+
+    // 每用户 Bot 数量上限（按创建者统计）
+    $maxPerUser = isset($botCfg['max_per_user']) ? (int)$botCfg['max_per_user'] : 5;
+    if ($maxPerUser > 0) {
+        $creatorBotCount = $db->count('users', ['account_type' => 'bot', 'created_by' => $creator['id']]);
+        if ($creatorBotCount >= $maxPerUser) {
+            json_response(403, ['error' => 'bot_limit_reached', 'message' => "每个用户最多创建 {$maxPerUser} 个 Bot"]);
+        }
+    }
+
+    // 创建 Bot 用户（密码随机，不可用密码登录）
+    $userId = $db->insert('users', [
+        'username'     => $botUsername,
+        'password'     => password_hash(bin2hex(random_bytes(32)), PASSWORD_BCRYPT),
+        'email'        => '',
+        'account_type' => 'bot',
+        'role'         => 'member',
+        'status'       => 1,
+        'created_by'   => $creator['id'],
+    ]);
+
+    // 生成永久 API Key
+    $apiKey = 'bot_' . bin2hex(random_bytes(24));
+    $db->insert('bot_keys', [
+        'user_id' => $userId,
+        'api_key' => $apiKey,
+        'name'    => $botName !== '' ? $botName : $botUsername,
+        'active'  => 1,
+    ]);
+
+    // 审计日志（记录创建者）
+    $db->insert('audit_logs', [
+        'user_id'     => $creator['id'],
+        'username'    => $creator['username'],
+        'action'      => 'bot.create',
+        'target_type' => 'bot',
+        'target_id'   => $userId,
+        'ip'          => $_SERVER['REMOTE_ADDR'] ?? '',
+        'user_agent'  => $_SERVER['HTTP_USER_AGENT'] ?? '',
+        'detail'      => json_encode(['bot_username' => $botUsername, 'creator_id' => $creator['id']], JSON_UNESCAPED_UNICODE),
+    ]);
+
+    json_response(201, [
+        'success'    => true,
+        'message'    => 'Bot 注册成功',
+        'user_id'    => $userId,
+        'username'   => $botUsername,
+        'api_key'    => $apiKey,
+        'creator_id' => (int)$creator['id'],
+        'hint'       => '请求时在 Header 中加入 X-Bot-Key: ' . $apiKey,
+    ]);
+}
+
 // ── 参数校验 ──
 if ($username === '' || $password === '') {
     json_response(400, ['error' => 'missing_fields', 'message' => '用户名和密码不能为空']);
@@ -116,20 +205,7 @@ try {
 // ── 创建用户 ──
 $passwordHash = password_hash($password, PASSWORD_BCRYPT);
 
-$accountType = trim($input['account_type'] ?? '');
-if ($accountType === 'bot') {
-    // 检查是否允许自助注册 Bot
-    $allowSelfRegister = isset($config['user']['bot']['allow_self_register'])
-        ? $config['user']['bot']['allow_self_register'] : false;
-    if (!$allowSelfRegister) {
-        json_response(403, ['error' => 'bot_register_disabled', 'message' => '暂不支持自助注册 Bot']);
-    }
-    // 检查用户是否有 bot 注册权限（虽然注册时还没登录，但我们用 config 控制）
-    // 检查每个普通用户最大 Bot 数量
-    $maxPerUser = isset($config['user']['bot']['max_per_user']) ? (int)$config['user']['bot']['max_per_user'] : 5;
-    $existingBotCount = 0;
-    // 注册时无当前用户，仅做配置级检查
-} elseif ($accountType !== '' && !in_array($accountType, ['user', 'bot'])) {
+if ($accountType !== '' && $accountType !== 'user') {
     json_response(400, ['error' => 'invalid_account_type', 'message' => 'account_type 只能为 user 或 bot']);
 }
 
@@ -140,6 +216,7 @@ $userData = [
     'contact'      => $contact,
     'reg_ip'       => $_SERVER['REMOTE_ADDR'] ?? '',
     'account_type' => $accountType ?: 'user',
+    // 角色按默认配置；管理员账号通过 install.php 安装向导创建
     'role'         => isset($config['user']['default_role']) ? $config['user']['default_role'] : 'member',
     'status'       => 1,
 ];

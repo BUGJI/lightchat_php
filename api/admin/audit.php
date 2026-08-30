@@ -6,7 +6,7 @@
  * GET /api/admin/audit.php?action=login     按操作筛选
  * GET /api/admin/audit.php?user_id=1        按用户筛选
  * GET /api/admin/audit.php?limit=100        分页
- * GET /api/admin/audit.php?export=1         导出 JSON（下载）
+ * GET /api/admin/audit.php?export=1         导出 JSON（下载，分批流式全量）
  *
  * 需要 admin 权限
  */
@@ -31,41 +31,67 @@ $export = isset($_GET['export']);
 
 if ($limit < 1 || $limit > 500) $limit = 100;
 
-// ── 查询日志 ──
-$logs = $db->select('audit_logs', [], '*', 'id DESC', 0);
-
-// 过滤
-$filtered = [];
-foreach ($logs as $log) {
-    if ($action !== '' && ($log['action'] ?? '') !== $action) continue;
-    if ($userId > 0 && (int)($log['user_id'] ?? 0) !== $userId) continue;
-    $filtered[] = $log;
-    if (count($filtered) >= $limit) break;
+// ── 构建查询条件（条件下推，避免全表拉进内存） ──
+$where = [];
+if ($action !== '') {
+    $where['action'] = $action;
+}
+if ($userId > 0) {
+    $where['user_id'] = $userId;
 }
 
-// ── 导出模式 ──
+$total = $db->count('audit_logs', $where);
+
+// ── 导出模式：分批流式输出全量，避免大表 OOM ──
 if ($export) {
     header('Content-Type: application/json; charset=utf-8');
     header('Content-Disposition: attachment; filename="audit_logs_' . date('Ymd_His') . '.json"');
-    echo json_encode($filtered, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT);
+    $first = true;
+    $cursor = 0;
+    echo '[';
+    while (true) {
+        $batchWhere = $where;
+        if ($cursor > 0) {
+            $batchWhere['id <'] = $cursor;
+        }
+        $batch = $db->select('audit_logs', $batchWhere, '*', 'id DESC', 500);
+        if (empty($batch)) {
+            break;
+        }
+        foreach ($batch as $log) {
+            if (!$first) {
+                echo ',';
+            }
+            $first = false;
+            echo json_encode($log, JSON_UNESCAPED_UNICODE);
+            $cursor = (int)$log['id'];
+        }
+        if (count($batch) < 500) {
+            break;
+        }
+    }
+    echo ']';
     exit;
 }
 
-// ── 统计摘要 ──
-$stats = [
-    'total_logs'    => count($logs),
-    'action_counts' => [],
-];
+// ── 普通列表：limit 条（id DESC 快速路径） ──
+$logs = $db->select('audit_logs', $where, '*', 'id DESC', $limit);
+
+// 当前页的 action 统计
+$actionCounts = [];
 foreach ($logs as $log) {
     $a = $log['action'] ?? 'unknown';
-    if (!isset($stats['action_counts'][$a])) $stats['action_counts'][$a] = 0;
-    $stats['action_counts'][$a]++;
+    if (!isset($actionCounts[$a])) $actionCounts[$a] = 0;
+    $actionCounts[$a]++;
 }
 
 json_success([
-    'stats'  => $stats,
-    'logs'   => $filtered,
-    'count'  => count($filtered),
+    'stats'  => [
+        'total_logs'    => $total,
+        'action_counts' => $actionCounts,
+    ],
+    'logs'   => $logs,
+    'count'  => count($logs),
     'params' => [
         'action'  => $action ?: '(all)',
         'user_id' => $userId ?: '(all)',

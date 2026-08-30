@@ -77,7 +77,7 @@ if ($cooldownSeconds > 0 && !role_at_least($user['role'], 'admin')) {
     $recentMessages = $db->select('messages', [
         'channel_id' => $channelId,
         'user_id'    => $user['id'],
-    ], '*', 'created_at DESC', 1);
+    ], '*', 'id DESC', 1);   // id DESC 走 LocalDriver 快速路径，避免全量排序
     if (!empty($recentMessages)) {
         $lastTime = strtotime($recentMessages[0]['created_at']);
         if (time() - $lastTime < $cooldownSeconds) {

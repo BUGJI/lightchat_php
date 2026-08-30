@@ -141,15 +141,6 @@ return [
             'max_download_mbps' => 4,               // 最大下载带宽
         ],
         
-        // 当前使用统计（需要定期更新）
-        'usage' => [
-            'network_flow_mb' => 0,                 // 本月已使用流量
-            'disk_used_mb' => 0,                    // 已使用磁盘空间
-            'current_connections' => 0,             // 当前连接数
-            'reset_day' => 1,                       // 每月几日重置流量统计
-            'last_reset_date' => null,              // 上次重置日期
-        ],
-        
         // 性能配置
         'performance' => [
             'enable_gzip' => true,                  // 启用GZIP压缩
@@ -313,40 +304,6 @@ return [
         ],
     ],
 
-    // ==================== 轮询配置 ====================
-    'polling' => [
-        // 时间配置（毫秒）
-        'min_interval_ms' => 1000,                  // 最小刷新间隔 1秒
-        'max_interval_ms' => 30000,                 // 最大刷新间隔 30秒
-        'default_interval_ms' => 3000,              // 默认刷新间隔 3秒
-        
-        // 长轮询配置
-        'long_polling' => [
-            'enabled' => true,                      // 启用长轮询
-            'timeout_seconds' => 25,                // 长轮询超时时间（秒）
-            'max_wait_cycles' => 5,                 // 最大等待检查次数
-            'wait_interval_ms' => 2000,             // 每次检查间隔（毫秒）
-        ],
-        
-        // 自适应优化
-        'adaptive' => [
-            'enabled' => true,
-            'increase_factor' => 1.5,               // 无消息时增加间隔倍数
-            'decrease_factor' => 0.5,               // 有消息时减少间隔倍数
-            'idle_threshold_seconds' => 30,         // 闲置判断阈值（秒）
-            'min_factor' => 0.5,
-            'max_factor' => 3.0,
-        ],
-        
-        // 智能回退（根据服务器负载）
-        'fallback' => [
-            'response_time_threshold_ms' => 500,    // 响应时间超过此值触发降级
-            'error_threshold' => 3,                  // 连续错误次数触发降级
-            'fallback_interval_ms' => 5000,         // 降级后的间隔（5秒）
-            'recovery_attempts' => 5,                // 降级后尝试恢复的次数
-        ],
-    ],
-
     // ==================== 清理与维护配置 ====================
     'maintenance' => [
         // 自动清理策略
@@ -360,8 +317,6 @@ return [
         // 消息清理
         'message_cleanup' => [
             'delete_after_days' => 30,               // 30天后删除旧消息
-            'archive_old_messages' => false,         // 是否归档（而非删除）
-            'archive_path' => __DIR__ . '/archives/',
             'batch_size' => 1000,                    // 每次清理批次大小
         ],
         
@@ -376,32 +331,6 @@ return [
             'delete_orphaned_files' => true,         // 删除没有关联消息的文件
             'orphaned_check_days' => 7,              // 检查7天前的孤立文件
             'temp_cleanup_hours' => 24,              // 清理24小时前的临时文件
-        ],
-        
-        // 日志清理
-        'log_cleanup' => [
-            'keep_days' => 7,                        // 保留7天日志
-            'error_log_keep_days' => 30,             // 错误日志保留30天
-            'access_log_keep_days' => 3,             // 访问日志保留3天
-        ],
-        
-        // 存储空间管理
-        'storage_management' => [
-            'auto_delete_when_full' => false,        // 空间满时自动删除旧数据
-            'warning_threshold_percent' => 85,       // 85%时发出警告
-            'critical_threshold_percent' => 95,      // 95%时停止新上传
-            'cleanup_target_percent' => 70,          // 自动清理到70%使用率
-        ],
-        
-        // 备份配置
-        'backup' => [
-            'enabled' => true,
-            'auto_backup' => false,                  // 自动备份（虚拟主机可能资源不足）
-            'backup_interval_days' => 7,
-            'keep_backup_count' => 4,
-            'backup_path' => __DIR__ . '/backups/',
-            'exclude_tables' => ['logs', 'sessions', 'cache'],
-            'compress' => true,
         ],
     ],
 
@@ -419,73 +348,6 @@ return [
             'exposed_headers' => ['X-Total-Count', 'X-RateLimit-Remaining'],
             'allow_credentials' => true,
             'max_age' => 86400,                      // 预检请求缓存24小时
-        ],
-        
-        // 速率限制（基于IP或用户）
-        // 注意：实际限流由 security.ip_rate_limit 实现（bootstrap 执行），此配置为接口级预留
-        'rate_limit' => [
-            'enabled' => false,                       // 已委托给 security.ip_rate_limit
-            'requests_per_minute' => 60,              // 每分钟最多请求数
-            'requests_per_hour' => 1000,              // 每小时最多请求数
-            'burst_multiplier' => 2,                  // 突发请求倍数
-            'response_headers' => true,               // 返回剩余次数头部
-        ],
-        
-        // 响应格式
-        'response' => [
-            'format' => 'json',                       // json, xml
-            'pretty_print' => false,                  // 生产环境false
-            'include_timestamp' => true,
-            'include_request_id' => true,
-            'include_execution_time' => false,        // 调试用
-        ],
-        
-        // API响应码定义
-        'response_codes' => [
-            'success' => 200,
-            'created' => 201,
-            'accepted' => 202,
-            'no_content' => 204,
-            'bad_request' => 400,
-            'unauthorized' => 401,
-            'forbidden' => 403,
-            'not_found' => 404,
-            'method_not_allowed' => 405,
-            'conflict' => 409,
-            'too_many_requests' => 429,
-            'server_error' => 500,
-            'service_unavailable' => 503,
-            
-            'messages' => [
-                200 => '操作成功',
-                201 => '创建成功',
-                204 => '操作成功',
-                400 => '请求参数错误',
-                401 => '未登录或登录已过期',
-                403 => '权限不足',
-                404 => '资源不存在',
-                405 => '请求方法不支持',
-                409 => '数据冲突',
-                429 => '请求过于频繁，请稍后再试',
-                500 => '服务器内部错误',
-                503 => '服务暂不可用',
-            ],
-        ],
-        
-        // API密钥/令牌（用于第三方客户端）
-        'api_keys' => [
-            'enabled' => false,
-            'keys' => [],                             // ['key1' => 'client_name']
-            'header_name' => 'X-API-Key',
-        ],
-        
-        // 支持的客户端类型
-        'clients' => [
-            'web' => ['version' => '1.0', 'min_version' => '1.0'],
-            'mobile' => ['version' => '1.0', 'min_version' => '1.0'],
-            'desktop' => ['version' => '0.9', 'min_version' => '0.9'],
-            'api' => ['version' => '1.0', 'min_version' => '1.0'],
-            'wechat' => ['version' => '1.0', 'min_version' => '1.0'],
         ],
     ],
 
@@ -509,10 +371,7 @@ return [
             // 优点：无需数据库，部署即用；缺点：不支持复杂查询，性能较低
             'local' => [
                 'data_path' => __DIR__ . '/data/',        // 数据存储目录
-                'format' => 'json',                       // 存储格式: json / serialize
-                'auto_backup' => true,                    // 自动备份
-                'backup_interval_hours' => 24,            // 备份间隔
-                'cache_enabled' => true,                  // 启用缓存减少文件读取
+                'cache_enabled' => true,                  // 启用缓存减少文件读取（mtime 校验保证一致性）
                 'cache_ttl' => 300,                       // 缓存有效期（秒）
             ],
             
@@ -524,78 +383,6 @@ return [
             'password' => 'your_password_here',
             'charset' => 'utf8mb4',
             'collation' => 'utf8mb4_unicode_ci',
-            'prefix' => 'chat_',
-            
-            // 连接池（虚拟主机通常不支持，但预留配置）
-            'pool' => [
-                'max_connections' => 5,
-                'timeout_seconds' => 3,
-                'wait_timeout' => 30,
-            ],
-        ],
-        
-        // 读写分离配置（虚拟主机很少支持）
-        'replication' => [
-            'enabled' => false,
-            'read_hosts' => [],
-        ],
-        
-        // 查询优化
-        'query' => [
-            'slow_query_log' => true,
-            'slow_query_threshold_ms' => 500,
-            'enable_cache' => true,
-            'cache_ttl' => 300,
-        ],
-    ],
-
-    // ==================== 缓存配置 ====================
-    'cache' => [
-        'driver' => 'file',                           // file, redis, memcached
-        'prefix' => 'chat_',
-        'ttl' => 3600,                                // 默认过期时间
-        
-        'file' => [
-            'path' => __DIR__ . '/cache/',
-            'depth' => 2,                             // 目录深度
-            'cleanup_probability' => 0.01,            // 清理过期缓存的概率
-        ],
-        
-        'redis' => [
-            'host' => '127.0.0.1',
-            'port' => 6379,
-            'password' => null,
-            'database' => 0,
-            'timeout' => 2.5,
-        ],
-    ],
-
-    // ==================== 日志配置 ====================
-    'logging' => [
-        'enabled' => true,
-        'level' => 'error',                           // debug, info, warning, error
-        'driver' => 'file',                           // file, database
-        
-        'file' => [
-            'path' => __DIR__ . '/logs/',
-            'filename' => 'chat.log',
-            'max_size_mb' => 100,
-            'rotate' => true,
-            'max_files' => 7,
-            'date_format' => 'Y-m-d H:i:s',
-        ],
-        
-        'database' => [
-            'table' => 'logs',
-            'async_insert' => true,                   // 异步写入（降低性能影响）
-        ],
-        
-        // 不同级别的日志输出
-        'channels' => [
-            'error' => ['file', 'database'],
-            'warning' => ['file'],
-            'info' => ['file'],
-            'debug' => [],                             // debug不记录，提升性能
         ],
     ],
 
@@ -689,46 +476,14 @@ return [
 
     // ==================== 安全配置 ====================
     'security' => [
-        // XSS防护
-        'xss_protection' => [
+        // 登录暴力破解防护（按 用户名+IP 统计失败次数，超限临时锁定）
+        'login_protection' => [
             'enabled' => true,
-            'filter_input' => true,                    // 过滤输入
-            'escape_output' => true,                   // 转义输出
-            'allowed_html_tags' => ['b', 'i', 'u', 'img', 'code'],  // 允许的HTML标签
+            'max_failures' => 5,                    // 连续失败次数
+            'lockout_minutes' => 15,                // 锁定分钟
+            'fail_window' => 10,                    // 失败统计窗口（分钟）
         ],
-        
-        // CSRF防护
-        'csrf_protection' => [
-            'enabled' => true,
-            'token_name' => 'csrf_token',
-            'token_expiry' => 3600,
-            'exclude_paths' => ['/api/poll'],          // 排除的路径（如轮询接口）
-        ],
-        
-        // SQL注入防护
-        'sql_injection_protection' => [
-            'enabled' => true,
-            'use_prepared_statements' => true,         // 使用预编译语句
-            'filter_input' => true,                     // 过滤输入
-        ],
-        
-        // 请求限制
-        'request_limits' => [
-            'max_post_size_kb' => 2048,                 // 最大POST数据大小 2MB
-            'max_input_vars' => 1000,                   // 最大输入变量数
-            'max_file_uploads' => 5,                    // 最大上传文件数
-        ],
-        
-        // IP黑白名单
-        'ip_filter' => [
-            'blacklist' => [],                          // 封禁IP列表
-            'whitelist' => [],                          // 白名单IP（空表示不限制）
-            'blacklist_message' => '您的IP已被封禁',
-        ],
-        
-        // 内容安全策略
-        'csp_header' => "default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.example.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:;",
-        
+
         // 速率限制（基于IP）
         'ip_rate_limit' => [
             'enabled' => true,
@@ -737,17 +492,5 @@ return [
             'ban_on_exceed' => false,                   // 是否自动封禁超限IP
             'ban_duration_minutes' => 60,               // 封禁时长
         ],
-    ],
-
-    // ==================== 开发与调试配置 ====================
-    'debug_config' => [
-        'enabled' => false,                             // 生产环境必须false
-        'display_errors' => false,                      // 是否显示错误
-        'error_reporting' => E_ALL & ~E_DEPRECATED & ~E_STRICT,
-        'log_queries' => false,                         // 记录所有SQL查询
-        'profile_execution_time' => false,              // 记录执行时间
-        'profile_memory_usage' => false,                // 记录内存使用
-        'allowed_ips' => ['127.0.0.1', '::1'],          // 允许调试的IP
-        'log_file' => __DIR__ . '/logs/debug.log',
     ],
 ];

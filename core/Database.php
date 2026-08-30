@@ -31,10 +31,12 @@ class Database {
         
         switch ($type) {
             case 'mysql':
+                require_once __DIR__ . '/../drivers/PdoDriver.php';
                 require_once __DIR__ . '/../drivers/MySQLDriver.php';
                 $this->driver = new MySQLDriver($this->config);
                 break;
             case 'sqlite':
+                require_once __DIR__ . '/../drivers/PdoDriver.php';
                 require_once __DIR__ . '/../drivers/SQLiteDriver.php';
                 $this->driver = new SQLiteDriver($this->config['sqlite']);
                 break;
@@ -67,6 +69,7 @@ class Database {
                 account_type VARCHAR(20) DEFAULT 'user',
                 role VARCHAR(20) DEFAULT 'member',
                 status TINYINT DEFAULT 1,
+                created_by INTEGER DEFAULT NULL,
                 last_active_at TIMESTAMP,
 notification_mode VARCHAR(20) DEFAULT 'none',
                 notification_email VARCHAR(255) DEFAULT '',
@@ -81,6 +84,9 @@ notification_mode VARCHAR(20) DEFAULT 'none',
         
         // 迁移已有用户，补齐通知字段
         $this->migrateNotificationFields();
+
+        // 迁移：users 表补 created_by 列（Bot 创建者溯源）
+        $this->migrateBotCreatorField();
         
         // 创建会话表
         $this->driver->execute("
@@ -227,19 +233,7 @@ notification_mode VARCHAR(20) DEFAULT 'none',
             )
         ");
         
-        // 创建默认频道
-        $defaultChannels = [
-            ['name' => 'general', 'display_name' => '闲聊大厅', 'type' => 'public'],
-            ['name' => 'announcements', 'display_name' => '系统公告', 'type' => 'announcement'],
-            ['name' => 'help', 'display_name' => '帮助中心', 'type' => 'public'],
-        ];
-        
-        foreach ($defaultChannels as $channel) {
-            $exists = $this->driver->get('channels', ['name' => $channel['name']]);
-            if (!$exists) {
-                $this->driver->insert('channels', $channel);
-            }
-        }
+        // 默认频道改由 install.php 安装向导创建（带 owner 与成员），此处不再重复创建
     }
     
     /**
@@ -287,6 +281,27 @@ $defaults = [
         }
 
         // 写入标记文件
+        @touch($flagFile);
+    }
+
+    /**
+     * 迁移：为已有 users 补齐 created_by 列（Bot 创建者溯源，仅非 Local 驱动需要）
+     * LocalDriver 使用 JSON 动态字段，无需 ALTER。
+     */
+    private function migrateBotCreatorField()
+    {
+        if ($this->driver instanceof \LocalDriver) {
+            return;
+        }
+        $flagFile = __DIR__ . '/../data/.migrated_bot_creator_field';
+        if (file_exists($flagFile)) {
+            return;
+        }
+        try {
+            $this->driver->execute("ALTER TABLE users ADD COLUMN created_by INTEGER DEFAULT NULL");
+        } catch (Exception $e) {
+            // 列已存在或驱动不支持，忽略
+        }
         @touch($flagFile);
     }
 

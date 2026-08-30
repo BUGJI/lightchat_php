@@ -47,10 +47,12 @@ $quota = [
 //  磁盘用量
 // ═══════════════════════════════════════
 
-$dataDir     = __DIR__ . '/../data';
+$dataDir     = isset($config['database']['default']['local']['data_path'])
+    ? rtrim($config['database']['default']['local']['data_path'], '/')
+    : __DIR__ . '/../../data';
 $uploadsDir  = isset($config['upload']['storage']['local_path'])
     ? rtrim($config['upload']['storage']['local_path'], '/')
-    : __DIR__ . '/../uploads';
+    : __DIR__ . '/../../uploads';
 
 $dataDirSize    = dir_size($dataDir);
 $uploadsDirSize = dir_size($uploadsDir);
@@ -67,6 +69,38 @@ if (is_dir($dataDir)) {
     foreach (glob($dataDir . '/*.json') as $f) {
         $dataFiles[basename($f)] = round(filesize($f) / 1024, 2);
     }
+}
+
+// ═══════════════════════════════════════
+//  使用统计（自动累计：近似流量 + 请求数）
+// ═══════════════════════════════════════
+
+$usageFile = $dataDir . '/usage.json';
+$usage = [
+    'network_flow_mb' => 0,
+    'total_requests'  => 0,
+    'month'           => date('Y-m'),
+    'last_reset_date' => null,
+];
+if (file_exists($usageFile)) {
+    $saved = @json_decode(file_get_contents($usageFile), true);
+    if (is_array($saved)) {
+        $usage = array_merge($usage, $saved);
+    }
+}
+
+// 当前活跃会话数（近似当前连接数：未过期 session 数，-1 表示无法获取）
+$activeSessions = -1;
+try {
+    $activeSessions = 0;
+    $allSessions = $db->select('sessions');
+    foreach ($allSessions as $s) {
+        if (isset($s['expires_at']) && strtotime($s['expires_at']) > time()) {
+            $activeSessions++;
+        }
+    }
+} catch (Exception $e) {
+    $activeSessions = -1;
 }
 
 // ═══════════════════════════════════════
@@ -95,6 +129,15 @@ $result = [
         'free_mb'     => $diskFreeMB,
         'total_mb'    => $diskTotalMB,
         'used_pct'    => $diskPct,
+    ],
+
+    'usage' => [
+        'network_flow_mb' => (float)$usage['network_flow_mb'],   // 本月近似流量（请求体+响应体）
+        'disk_used_mb'    => $diskUsedMB,                        // 已用磁盘（实时计算）
+        'active_sessions' => $activeSessions,                    // 当前活跃会话（近似连接数）
+        'total_requests'  => (int)$usage['total_requests'],      // 本月请求数
+        'month'           => $usage['month'],                    // 当前统计月份
+        'last_reset_date' => $usage['last_reset_date'],          // 上次重置日期
     ],
 
     'php' => $phpInfo,

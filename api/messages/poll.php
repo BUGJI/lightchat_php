@@ -55,6 +55,7 @@ $cycle          = 0;
 
 while ($cycle <= $maxCycles) {
     $newMessages = [];
+    $senderIds   = [];
 
     // ── 检查频道新消息 ──
     if (!empty($channelIds)) {
@@ -73,30 +74,20 @@ while ($cycle <= $maxCycles) {
             }
         }
 
-        // 获取每个频道的消息
+        // 获取每个频道的增量消息（id > since_id 直接下推，避免只取最近 N 条导致漏消息）
         foreach ($visibleChannelIds as $cid) {
             $where = ['channel_id' => $cid];
+            if ($sinceId > 0) {
+                $where['id >'] = $sinceId;
+            }
             if (!role_at_least($user['role'], 'admin')) {
                 $where['is_deleted != '] = 1;
             }
-            $allMsgs = $db->select('messages', $where, '*', 'id DESC', 50);
+            $allMsgs = $db->select('messages', $where, '*', 'id ASC', 200);
             foreach ($allMsgs as $msg) {
-                if ((int)$msg['id'] > $sinceId && (int)$msg['user_id'] !== $user['id']) {
-                    // 附用户信息
-                    $sender = $db->get('users', ['id' => $msg['user_id']]);
-                    $newMessages[] = [
-                        'id'              => (int)$msg['id'],
-                        'channel_id'      => (int)$msg['channel_id'],
-                        'user_id'         => (int)$msg['user_id'],
-                        'username'        => $sender ? $sender['username'] : '系统',
-                        'avatar'          => $sender ? $sender['avatar'] : null,
-                        'parent_id'       => isset($msg['parent_id']) ? (int)$msg['parent_id'] : 0,
-                        'type'            => $msg['type'] ?? 'text',
-                        'content'         => $msg['content'] ?? '',
-                        'file_url'        => $msg['file_url'] ?? null,
-                        'mentioned_users' => $msg['mentioned_users'] ?? null,
-                        'created_at'      => $msg['created_at'] ?? '',
-                    ];
+                if ((int)$msg['user_id'] !== $user['id']) {
+                    $senderIds[] = (int)$msg['user_id'];
+                    $newMessages[] = ['kind' => 'channel', 'msg' => $msg];
                 }
             }
         }
@@ -104,25 +95,17 @@ while ($cycle <= $maxCycles) {
 
     // ── 检查私聊新消息 ──
     if ($privateChatId > 0) {
-        $allPm = $db->select('private_messages', ['chat_id' => $privateChatId], '*', 'id DESC', 50);
+        $pmWhere = ['chat_id' => $privateChatId];
+        if ($sinceId > 0) {
+            $pmWhere['id >'] = $sinceId;
+        }
+        $allPm = $db->select('private_messages', $pmWhere, '*', 'id ASC', 200);
         foreach ($allPm as $pm) {
-            if ((int)$pm['id'] > $sinceId && (int)$pm['to_user_id'] === $user['id']) {
+            if ((int)$pm['to_user_id'] === $user['id']) {
                 if (isset($pm['is_deleted']) && (int)$pm['is_deleted'] === 1) continue;
 
-                $sender = $db->get('users', ['id' => $pm['from_user_id']]);
-                $newMessages[] = [
-                    'id'            => (int)$pm['id'],
-                    'private_chat_id' => (int)$pm['chat_id'],
-                    'from_user_id'  => (int)$pm['from_user_id'],
-                    'username'      => $sender ? $sender['username'] : '未知用户',
-                    'avatar'        => $sender ? $sender['avatar'] : null,
-                    'type'          => $pm['type'] ?? 'text',
-                    'content'       => $pm['content'] ?? '',
-                    'file_url'      => $pm['file_url'] ?? null,
-                    'file_size'     => $pm['file_size'] ?? 0,
-                    'is_read'       => isset($pm['is_read']) ? (int)$pm['is_read'] : 0,
-                    'created_at'    => $pm['created_at'] ?? '',
-                ];
+                $senderIds[] = (int)$pm['from_user_id'];
+                $newMessages[] = ['kind' => 'private', 'msg' => $pm];
 
                 // 标记为已读
                 $db->update('private_messages', ['is_read' => 1], ['id' => $pm['id']]);
@@ -132,16 +115,58 @@ while ($cycle <= $maxCycles) {
 
     // ── 如果有新消息，立即返回 ──
     if (count($newMessages) > 0) {
-        // 计算最新的消息 ID
+        // 批量查用户（避免 N+1）
+        $userCache = [];
+        foreach (array_unique($senderIds) as $uid) {
+            $u = $db->get('users', ['id' => $uid]);
+            if ($u) {
+                $userCache[$uid] = $u;
+            }
+        }
+
+        $result = [];
         $latestId = $sinceId;
-        foreach ($newMessages as $m) {
-            if ($m['id'] > $latestId) {
-                $latestId = $m['id'];
+        foreach ($newMessages as $item) {
+            if ($item['kind'] === 'channel') {
+                $msg = $item['msg'];
+                $sender = isset($userCache[(int)$msg['user_id']]) ? $userCache[(int)$msg['user_id']] : null;
+                $result[] = [
+                    'id'              => (int)$msg['id'],
+                    'channel_id'      => (int)$msg['channel_id'],
+                    'user_id'         => (int)$msg['user_id'],
+                    'username'        => $sender ? $sender['username'] : '系统',
+                    'avatar'          => $sender ? ($sender['avatar'] ?? null) : null,
+                    'parent_id'       => isset($msg['parent_id']) ? (int)$msg['parent_id'] : 0,
+                    'type'            => $msg['type'] ?? 'text',
+                    'content'         => $msg['content'] ?? '',
+                    'file_url'        => $msg['file_url'] ?? null,
+                    'mentioned_users' => $msg['mentioned_users'] ?? null,
+                    'created_at'      => $msg['created_at'] ?? '',
+                ];
+            } else {
+                $pm = $item['msg'];
+                $sender = isset($userCache[(int)$pm['from_user_id']]) ? $userCache[(int)$pm['from_user_id']] : null;
+                $result[] = [
+                    'id'               => (int)$pm['id'],
+                    'private_chat_id'  => (int)$pm['chat_id'],
+                    'from_user_id'     => (int)$pm['from_user_id'],
+                    'username'         => $sender ? $sender['username'] : '未知用户',
+                    'avatar'           => $sender ? ($sender['avatar'] ?? null) : null,
+                    'type'             => $pm['type'] ?? 'text',
+                    'content'          => $pm['content'] ?? '',
+                    'file_url'         => $pm['file_url'] ?? null,
+                    'file_size'        => $pm['file_size'] ?? 0,
+                    'is_read'          => isset($pm['is_read']) ? (int)$pm['is_read'] : 0,
+                    'created_at'       => $pm['created_at'] ?? '',
+                ];
+            }
+            if ($item['msg']['id'] > $latestId) {
+                $latestId = (int)$item['msg']['id'];
             }
         }
 
         json_success([
-            'messages'  => $newMessages,
+            'messages'  => $result,
             'latest_id' => $latestId,
         ]);
     }

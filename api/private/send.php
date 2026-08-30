@@ -124,13 +124,20 @@ try {
     require_once __DIR__ . '/../../notifications/NotificationManager.php';
     $notifConfig = $config['notifications'] ?? [];
     $offlineCfg = $notifConfig['offline_notify'] ?? [];
-    if (($offlineCfg['enabled'] ?? true) && ($config['notifications']['methods'] ?? [])) {
+    // 仅当至少有一种通知方式被显式启用时才走通知逻辑，避免空转
+    $enabledMethods = [];
+    foreach (($notifConfig['methods'] ?? []) as $methodName => $methodCfg) {
+        if (!empty($methodCfg['enabled'])) {
+            $enabledMethods[$methodName] = $methodCfg;
+        }
+    }
+    if (($offlineCfg['enabled'] ?? true) && $enabledMethods) {
         // 检查接收方是否开启了私信通知
         $toUserFull = $db->get('users', ['id' => $toUserId]);
         if ($toUserFull) {
             // 检查用户是否开启了私信通知
             if (!isset($toUserFull['notification_private_enabled']) || (bool)$toUserFull['notification_private_enabled']) {
-                $notifMgr = new NotificationManager($notifConfig['methods'] ?? []);
+                $notifMgr = new NotificationManager($enabledMethods);
                 $messageDataForNotif = [
                     'nickname'         => $user['username'] ?? $user['nickname'] ?? '未知用户',
                     'unread_count'     => 1,

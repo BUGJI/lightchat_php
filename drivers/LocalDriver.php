@@ -9,6 +9,8 @@ class LocalDriver implements DatabaseDriverInterface {
     private $tables = [];
     private $cache = [];
     private $cacheTime = [];
+    private $cacheMtime = [];   // 每个表对应文件的 mtime，用于检测外部修改
+    private $requestId = '';    // 当前请求标识（用于请求级缓存隔离）
     private $cacheEnabled = true;
     private $cacheTtl = 300;
     private $inTransaction = false;
@@ -31,8 +33,8 @@ class LocalDriver implements DatabaseDriverInterface {
         if (!is_dir($this->dataPath)) {
             mkdir($this->dataPath, 0755, true);
         }
-        
-        $this->loadAllTables();
+
+        // 表数据懒加载：首次访问时按需读取（见 getTable/loadTable）
     }
     
     public function connect() {
@@ -46,42 +48,53 @@ class LocalDriver implements DatabaseDriverInterface {
     }
     
     /**
-     * 加载所有表数据
-     */
-    private function loadAllTables() {
-        $tables = ['users', 'sessions', 'channels', 'channel_members', 'messages', 'private_chats', 'private_messages', 'uploads', 'bans', 'audit_logs', 'bot_keys'];
-        
-        foreach ($tables as $table) {
-            $this->loadTable($table);
-        }
-    }
-    
-    /**
      * 加载单个表
+     *
+     * 缓存命中条件：文件 mtime 未变化。仅靠 TTL 会在 php-fpm 多 worker 下读到
+     * 其他进程写入前的旧快照（静态单例跨请求保留），导致数据不一致；
+     * 用文件 mtime 校验后，外部写入会立即被感知。
+     * 每次访问都检查 mtime（filemtime 走 stat 缓存，开销很小），懒加载只读用到的表。
      */
     private function loadTable($table) {
-        // 检查缓存
-        if ($this->cacheEnabled && isset($this->cache[$table]) && isset($this->cacheTime[$table])) {
-            if (time() - $this->cacheTime[$table] < $this->cacheTtl) {
-                $this->tables[$table] = $this->cache[$table];
-                return;
-            }
+        // 请求级缓存隔离：常驻进程（php-fpm/mod_php/PHP-S）下静态单例跨请求保留，
+        // 但数组内容在请求间可能被部分回收（mtime 保留、内容丢失），导致"幽灵缓存"命中空表。
+        // 每次请求首次访问时强制从磁盘重新加载，保证数据正确性。
+        $currentRequestId = isset($_SERVER['REQUEST_TIME_FLOAT'])
+            ? (string)$_SERVER['REQUEST_TIME_FLOAT']
+            : uniqid('', true);
+        if ($this->requestId !== $currentRequestId) {
+            $this->requestId = $currentRequestId;
+            $this->tables = [];
+            $this->cache = [];
+            $this->cacheTime = [];
+            $this->cacheMtime = [];
         }
-        
+
         $file = $this->dataPath . $table . '.json';
-        
-        if (file_exists($file)) {
-            $content = file_get_contents($file);
+        $exists = file_exists($file);
+        $mtime = $exists ? (int)@filemtime($file) : 0;
+
+        // 缓存命中且文件未变化
+        if ($this->cacheEnabled && isset($this->cache[$table]) && isset($this->cacheMtime[$table])
+            && $this->cacheMtime[$table] === $mtime) {
+            $this->tables[$table] = $this->cache[$table];
+            $this->cacheTime[$table] = time();
+            return;
+        }
+
+        if ($exists) {
+            $content = @file_get_contents($file);
             $data = json_decode($content, true);
             $this->tables[$table] = $data ?: ['data' => [], 'next_id' => 1];
         } else {
             $this->tables[$table] = ['data' => [], 'next_id' => 1];
         }
-        
+
         // 写入缓存
         if ($this->cacheEnabled) {
             $this->cache[$table] = $this->tables[$table];
             $this->cacheTime[$table] = time();
+            $this->cacheMtime[$table] = $mtime;
         }
     }
     
@@ -114,20 +127,19 @@ class LocalDriver implements DatabaseDriverInterface {
             @rename($tmp, $file);
         }
         
-        // 更新缓存
+        // 更新缓存（同步记录最新 mtime）
         if ($this->cacheEnabled) {
             $this->cache[$table] = $this->tables[$table];
             $this->cacheTime[$table] = time();
+            $this->cacheMtime[$table] = file_exists($file) ? (int)@filemtime($file) : 0;
         }
     }
     
     /**
-     * 获取表数据引用
+     * 获取表数据引用（懒加载 + 每次 mtime 校验）
      */
     private function &getTable($table) {
-        if (!isset($this->tables[$table])) {
-            $this->tables[$table] = ['data' => [], 'next_id' => 1];
-        }
+        $this->loadTable($table);
         return $this->tables[$table];
     }
     
@@ -145,8 +157,11 @@ class LocalDriver implements DatabaseDriverInterface {
         // 执行DDL语句（创建表）
         if (preg_match('/CREATE TABLE IF NOT EXISTS (\w+)/i', $sql, $matches)) {
             $table = $matches[1];
-            if (!isset($this->tables[$table])) {
-                $this->tables[$table] = ['data' => [], 'next_id' => 1];
+            $file = $this->dataPath . $table . '.json';
+            // 只有文件不存在时才真正创建（空表），
+            // 绝不能覆盖已有数据文件（懒加载下 tables 仅存于当前请求，isset 判断每次都会成立）
+            if (!file_exists($file)) {
+                $this->loadTable($table);
                 $this->saveTable($table);
             }
             return 0;
@@ -302,8 +317,11 @@ class LocalDriver implements DatabaseDriverInterface {
     }
     
     public function rollback() {
-        // 重新加载所有表，放弃更改
-        $this->loadAllTables();
+        // 丢弃内存中所有更改，强制下次访问时从磁盘重新加载
+        $this->tables = [];
+        $this->cache = [];
+        $this->cacheTime = [];
+        $this->cacheMtime = [];
         $this->inTransaction = false;
         $this->transactionData = [];
         return true;

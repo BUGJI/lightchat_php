@@ -17,7 +17,6 @@
 - [9. 文件上传](#9-文件上传)
 - [10. Bot 管理](#10-bot-管理)
 - [11. 管理员接口](#11-管理员接口)
-- [12. VoceChat 适配器](#12-vocechat-适配器)
 - [附录A：通用错误码](#附录a通用错误码)
 
 ---
@@ -115,21 +114,22 @@ X-Bot-Key: bot_<random_hex>
 
 创建一个新用户账号并自动登录，返回会话令牌。
 
-**认证：** 无需认证
+**认证：** 普通用户注册无需认证；`account_type=bot` 自助注册 **必须登录**（Bearer Token），Bot 会记录创建者 ID 便于溯源。
 
 **请求体：**
 
 ```json
 {
   "username": "string (3-20位, 字母/数字/下划线/中文)",
-  "password": "string (≥6位)",
-  "email": "string (必填, 有效邮箱格式)",
+  "password": "string (≥6位, bot 注册无需)",
+  "email": "string (必填, 有效邮箱格式, bot 注册无需)",
   "contact": "string (可选, 联系方式, 最长100字)",
-  "account_type": "string (可选, 'user' 或 'bot', 默认 'user')"
+  "account_type": "string (可选, 'user' 或 'bot', 默认 'user')",
+  "name": "string (可选, 仅 bot 注册: Bot 名称/描述)"
 }
 ```
 
-**成功响应 (201)：**
+**普通用户成功响应 (201)：**
 
 ```json
 {
@@ -137,6 +137,20 @@ X-Bot-Key: bot_<random_hex>
   "username": "zhangsan",
   "token": "a1b2c3d4e5f6...",
   "expires_at": "2026-06-10 03:18:00"
+}
+```
+
+**Bot 注册成功响应 (201)：** 不返回会话 token，返回永久 API Key 与创建者信息
+
+```json
+{
+  "success": true,
+  "message": "Bot 注册成功",
+  "user_id": 2,
+  "username": "bot_mybot",
+  "api_key": "bot_a1b2c3d4e5f6...",
+  "creator_id": 1,
+  "hint": "请求时在 Header 中加入 X-Bot-Key: bot_a1b2c3d4e5f6..."
 }
 ```
 
@@ -155,7 +169,10 @@ X-Bot-Key: bot_<random_hex>
 | `sensitive_word` | 用户名包含敏感词 |
 | `invalid_contact` | 联系方式过长 |
 | `invalid_account_type` | account_type 无效 |
+| `unauthorized` | bot 注册未登录（请先登录） |
+| `forbidden` | 没有注册 Bot 的权限 |
 | `bot_register_disabled` | 自助注册 Bot 已关闭 |
+| `bot_limit_reached` | 超过每用户 Bot 数量上限 |
 | `db_error` | 数据库查询失败 |
 | `insert_failed` | 用户创建失败 |
 
@@ -388,6 +405,14 @@ curl http://localhost/api/health.php | python -m json.tool
     "total_mb": 100000.0,
     "used_pct": 50.0
   },
+  "usage": {
+    "network_flow_mb": 1.234,
+    "disk_used_mb": 12.45,
+    "active_sessions": 3,
+    "total_requests": 128,
+    "month": "2026-08",
+    "last_reset_date": "2026-08-01"
+  },
   "php": {
     "version": "7.4.33",
     "memory_limit": "128M",
@@ -414,6 +439,12 @@ curl http://localhost/api/health.php | python -m json.tool
 | `disk.free_mb` | float | 服务器剩余磁盘(MB)，-1 表示无法获取 |
 | `disk.total_mb` | float | 服务器总磁盘(MB)，-1 表示无法获取 |
 | `disk.used_pct` | float | 磁盘使用百分比，-1 表示无法获取 |
+| `usage.network_flow_mb` | float | 本月近似流量(MB)，请求体+响应体字节数累计，每月 1 号重置 |
+| `usage.disk_used_mb` | float | 已用磁盘(MB)，实时计算 |
+| `usage.active_sessions` | int | 当前活跃会话数（近似连接数），-1 表示无法获取 |
+| `usage.total_requests` | int | 本月请求数 |
+| `usage.month` | string | 当前统计月份(YYYY-MM) |
+| `usage.last_reset_date` | string | 上次流量统计重置日期 |
 | `php.version` | string | PHP 版本 |
 | `php.memory_limit` | string | 内存限制 |
 | `php.post_max_size` | string | POST 最大体积 |
@@ -1496,6 +1527,7 @@ Bot 用户名自动加 `bot_` 前缀以避免和普通用户冲突。
   "user_id": 10,
   "username": "bot_mybot",
   "api_key": "bot_a1b2c3d4e5f6...",
+  "creator_id": 1,
   "hint": "请求时在 Header 中加入 X-Bot-Key: bot_a1b2c3d4e5f6..."
 }
 ```
@@ -1508,7 +1540,7 @@ Bot 用户名自动加 `bot_` 前缀以避免和普通用户冲突。
 |-------|------|
 | `forbidden` | 没有创建 Bot 的权限 |
 | `missing_username` | Bot 用户名为空 |
-| `invalid_username` | Bot 用户名太短 |
+| `invalid_username` | Bot 用户名长度不符合规则（3-20 字符） |
 | `duplicate` | Bot 用户名已存在 |
 
 **curl 示例：**
@@ -1541,6 +1573,10 @@ curl -X POST http://localhost/api/bot/create.php \
       "id": 10,
       "username": "bot_weather",
       "status": 1,
+      "creator": {
+        "id": 1,
+        "username": "zhangsan"
+      },
       "has_active_key": true,
       "last_used_at": "2026-06-09 15:00:00",
       "created_at": "2026-05-20 10:00:00"
@@ -1549,6 +1585,8 @@ curl -X POST http://localhost/api/bot/create.php \
   "count": 1
 }
 ```
+
+> `creator` 为 Bot 创建者信息（自助注册/管理员创建都会记录），无法溯源时为 `null`。
 
 **单个 Bot 详情 — 响应 (200)：**
 
@@ -1559,12 +1597,17 @@ curl -X POST http://localhost/api/bot/create.php \
   "bot": {
     "id": 10,
     "username": "bot_weather",
-    "status": 1
+    "status": 1,
+    "creator": {
+      "id": 1,
+      "username": "zhangsan"
+    },
+    "created_at": "2026-05-20 10:00:00"
   },
   "keys": [
     {
       "id": 5,
-      "api_key": "bot_a1b2c3d4...",
+      "api_key": "bot_a1b2c3d4e5f6...",
       "name": "天气播报机器人",
       "active": 1,
       "last_used_at": "2026-06-09 15:00:00",
@@ -1574,11 +1617,13 @@ curl -X POST http://localhost/api/bot/create.php \
 }
 ```
 
+> 仅 `active=1` 的 Key 显示完整明文；历史/已禁用 Key 脱敏（前8位+`****`+后4位）。
+
 ---
 
 ### 10.3 Bot 管理操作
 
-**`POST /api/bot/list.php`** — 切换启用/禁用 或 重新生成 API Key
+**`POST /api/bot/list.php`** — 切换启用/禁用、重新生成 API Key 或删除 Bot
 
 **认证：** 需要认证 + `admin.bot.manage` 权限
 
@@ -1625,6 +1670,27 @@ curl -X POST http://localhost/api/bot/create.php \
 
 > 旧 API Key 会被禁用，新 Key 立即生效。
 
+**操作3：删除 Bot（级联删除全部 Key）**
+
+```json
+{
+  "action": "delete",
+  "bot_id": 10
+}
+```
+
+**成功响应 (200)：**
+
+```json
+{
+  "success": true,
+  "message": "Bot 已删除",
+  "deleted": 10
+}
+```
+
+> 以上所有管理操作（创建/启禁/重生成/删除）都会写入审计日志，便于合规溯源。
+
 **curl 示例：**
 
 ```bash
@@ -1639,6 +1705,12 @@ curl -X POST http://localhost/api/bot/list.php \
   -H "Authorization: Bearer <admin_token>" \
   -H "Content-Type: application/json" \
   -d '{"action": "regenerate", "bot_id": 10, "name": "新Key"}'
+
+# 删除 Bot
+curl -X POST http://localhost/api/bot/list.php \
+  -H "Authorization: Bearer <admin_token>" \
+  -H "Content-Type: application/json" \
+  -d '{"action": "delete", "bot_id": 10}'
 ```
 
 ---
@@ -1828,166 +1900,6 @@ curl "http://localhost/api/admin/audit.php?user_id=1&limit=50" \
 curl "http://localhost/api/admin/audit.php?export=1" \
   -H "Authorization: Bearer <admin_token>" \
   -o audit.json
-```
-
----
-
-## 12. VoceChat 适配器
-
-**入口文件：** `/api/voce_adapter.php`
-
-让 VoceChat 手表客户端 (`vocechat_web_wear`) 对接 LightChat 后端。VoceChat 格式的请求会被转换为 LightChat API 调用。
-
-**URL 重写规则：**
-
-```apache
-# Apache (.htaccess)
-RewriteRule ^api/(.*)$ /api/voce_adapter.php/$1 [QSA,L]
-```
-
-```nginx
-# Nginx
-location /api/ {
-    rewrite ^/api/(.*)$ /api/voce_adapter.php/$1 last;
-}
-```
-
-### 12.1 端点映射
-
-| VoceChat 端点 | 方法 | LightChat 后端 |
-|---------------|------|----------------|
-| `/token/login` | POST | `/api/token/login.php` |
-| `/token/renew` | POST | `/api/token/refresh.php` |
-| `/token/logout` | POST | 直接删除 session |
-| `/user` | GET | `/api/users/list.php` |
-| `/user/profile` | GET | 数据库直查 |
-| `/user/profile?user_id=` | GET | 数据库直查 |
-| `/user/search?q=` | GET | `/api/users/list.php` + 过滤 |
-| `/user/register` | POST | `/api/token/register.php` |
-| `/user/contacts` | GET | 从数据库构建 |
-| `/user/contacts/add/{uid}` | POST | 创建私聊会话 |
-| `/user/{uid}/history` | GET | `/api/private/history.php` |
-| `/user/{uid}/send` | POST | `/api/private/send.php` |
-| `/group` | GET | `/api/channels/list.php` |
-| `/group/create` | POST | 数据库建频道 |
-| `/group/{gid}/members` | GET | 数据库查成员 |
-| `/group/{gid}/join` | POST | 加入频道 |
-| `/group/{gid}/leave` | POST | 退出频道 |
-| `/group/{gid}/history` | GET | `/api/messages/history.php` |
-| `/group/{gid}/send` | POST | `/api/messages/send.php` |
-| `/resource/avatar` | GET | 404（客户端降级文字头像） |
-| `/resource/group_avatar` | GET | 404 |
-| `/resource/file?file_path=` | GET | 提供 uploads 目录文件 |
-| `/resource/localization` | GET | 空对象 `{}` |
-| `/system/info` | GET | 服务器信息 |
-| `/user/events` | GET | SSE 流长连接 |
-| `/admin/system/initialized` | GET | `true` |
-
-### 12.2 VoceChat 认证转换
-
-VoceChat 客户端的 `X-API-Key` 请求头自动转换为 LightChat 的 `Authorization: Bearer`。
-
-### 12.3 VoceChat 响应格式
-
-适配器将 LightChat 响应转换为 VoceChat 客户端的期望格式：
-
-**登录响应转换：**
-
-```json
-{
-  "token": "a1b2c3...",
-  "refresh_token": "a1b2c3...",
-  "user": {
-    "uid": 1,
-    "name": "zhangsan",
-    "email": ""
-  }
-}
-```
-
-**用户列表转换：**
-
-```json
-[
-  {
-    "uid": 1,
-    "name": "张三",
-    "email": "",
-    "avatar": "",
-    "status": "normal",
-    "is_online": false,
-    "is_contact": false
-  }
-]
-```
-
-**频道列表转换：**
-
-```json
-[
-  {
-    "gid": 1,
-    "name": "技术交流",
-    "description": "技术爱好者交流群",
-    "owner": 1,
-    "member_count": 15,
-    "is_public": true,
-    "is_joined": true
-  }
-]
-```
-
-**消息转换（VoceChat 格式）：**
-
-```json
-[
-  {
-    "mid": 100,
-    "created_at": 1686300000000,
-    "from_uid": 1,
-    "from_name": "zhangsan",
-    "detail": {
-      "type": "normal",
-      "content_type": "text/plain",
-      "content": "Hello"
-    },
-    "properties": []
-  }
-]
-```
-
-### 12.4 SSE 事件流 (`/user/events`)
-
-服务端推送事件流，VoceChat 手表客户端通过 `EventSource` 连接。
-
-**连接响应：**
-
-```
-Content-Type: text/event-stream
-Cache-Control: no-cache
-Connection: keep-alive
-
-event: connected
-data: {}
-
-data: {"mid":105,"created_at":1686301085000,"from_uid":2,"from_name":"lisi","chat_type":"group","to_gid":1,"detail":{"type":"normal","content_type":"text/plain","content":"你好"},"properties":[]}
-
-event: heartbeat
-data: {}
-```
-
-- 每 3 秒轮询一次数据库
-- 有新消息立即推送 `data:` 行
-- 55 秒超时后发送 heartbeat 并断开
-- 客户端需重连
-
-### 12.5 `/resource/file` 文件服务
-
-提供 uploads 目录中的文件给 VoceChat 客户端下载。
-
-```bash
-curl "http://localhost/api/resource/file?file_path=/uploads/20260609_abc.jpg"
-# 响应以 Content-Type: image/jpeg 返回文件内容
 ```
 
 ---
