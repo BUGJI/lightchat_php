@@ -317,6 +317,10 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC'
           <option value="webhook">Webhook</option>
         </select>
         <div id="notifModeWarn" style="display:none;color:#e74c3c;font-size:12px;margin-top:6px"></div>
+        <div style="display:flex;align-items:center;gap:10px;margin-top:8px;flex-wrap:wrap">
+          <button id="notifTestBtn" type="button" style="padding:6px 12px;border:none;border-radius:6px;font-size:12px;cursor:pointer;background:var(--primary);color:#fff" title="按当前设置发送一条测试通知（每分钟最多3次）">📨 发送测试通知</button>
+          <span id="notifTestResult" style="font-size:12px"></span>
+        </div>
       </div>
       <div class="form-group" style="margin-top:8px;display:flex;gap:16px;flex-wrap:wrap">
         <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer">
@@ -1074,7 +1078,55 @@ function toggleNotifFields() {
   document.getElementById('notifEmailBlock').classList.toggle('show', mode === 'email');
   document.getElementById('notifPushplusBlock').classList.toggle('show', mode === 'pushplus');
   document.getElementById('notifWebhookBlock').classList.toggle('show', mode === 'webhook');
+  const tb = document.getElementById('notifTestBtn');
+  if (tb) tb.disabled = mode === 'none';
+  const tr = document.getElementById('notifTestResult');
+  if (tr) tr.textContent = '';
 }
+
+/* ── 发送测试通知 ── */
+async function testNotification() {
+  const btn = document.getElementById('notifTestBtn');
+  const res = document.getElementById('notifTestResult');
+  const mode = document.getElementById('notifMode').value;
+  if (mode === 'none') {
+    res.textContent = '请先选择通知方式';
+    res.style.color = '#e74c3c';
+    return;
+  }
+  btn.disabled = true;
+  const origText = btn.textContent;
+  btn.textContent = '发送中…';
+  try {
+    // 先把表单里当前的通知设置保存，确保测试针对刚填的值
+    const body = {
+      notification_mode: mode,
+      notification_group_enabled: document.getElementById('notifGroupEnabled').checked,
+      notification_private_enabled: document.getElementById('notifPrivateEnabled').checked,
+    };
+    if (mode === 'email') {
+      body.notification_email = document.getElementById('notifEmail').value.trim();
+    } else if (mode === 'pushplus') {
+      body.notification_pushplus_key = document.getElementById('notifPushplusKey').value.trim();
+    } else if (mode === 'webhook') {
+      body.notification_webhook_url = document.getElementById('notifWebhookUrl').value.trim();
+      const secret = document.getElementById('notifWebhookSecret').value.trim();
+      if (secret) body.notification_webhook_secret = secret;
+    }
+    await post('/api/users/profile.php', body);
+    // 发送测试
+    await post('/api/users/test_notification.php', {});
+    res.textContent = '✅ 测试通知已发送，请检查是否收到';
+    res.style.color = '#27ae60';
+  } catch (e) {
+    res.textContent = '❌ ' + e.message;
+    res.style.color = '#e74c3c';
+  } finally {
+    btn.disabled = false;
+    btn.textContent = origText;
+  }
+}
+document.getElementById('notifTestBtn').onclick = testNotification;
 
 /* ── 图片查看器 ── */
 let _imgZoom = 1;

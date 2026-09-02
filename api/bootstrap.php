@@ -528,6 +528,69 @@ function apply_ip_rate_limit() {
     }
 }
 
+/**
+ * 用户/动作级速率限制（基于文件计数窗口，flock 并发安全）
+ * 与 apply_ip_rate_limit 不同：窗口按整分钟对齐（floor(now/window)*window），
+ * 保证"每 N 秒最多 X 次"的真实语义（滑窗式会在每次请求时顺延起点而失效）。
+ * @param string $bucket 限流桶标识（如 'test_notif:' . userId）
+ * @param int    $limit  窗口内允许次数
+ * @param int    $window 窗口秒数，默认 60
+ * @return void 超限时直接 json_response(429) 并终止
+ */
+function apply_user_rate_limit($bucket, $limit, $window = 60)
+{
+    global $config;
+    if ($limit <= 0) {
+        return;
+    }
+    $dir = isset($config['database']['default']['local']['data_path'])
+        ? rtrim($config['database']['default']['local']['data_path'], '/') . '/rate_limit'
+        : __DIR__ . '/../data/rate_limit';
+    if (!is_dir($dir)) {
+        @mkdir($dir, 0755, true);
+    }
+
+    $file = $dir . '/user_' . md5($bucket) . '.json';
+    $now = time();
+    $windowStart = (int)floor($now / $window) * $window;
+    $windowEnd = $windowStart + $window;
+
+    $fp = @fopen($file, 'c+');
+    if (!$fp) {
+        return; // 限流文件不可写时放行，避免误伤
+    }
+    @flock($fp, LOCK_EX);
+
+    $content = stream_get_contents($fp);
+    $count = 0;
+    if ($content !== false && $content !== '') {
+        $saved = @json_decode($content, true);
+        if (is_array($saved) && isset($saved['window']) && (int)$saved['window'] === $windowStart) {
+            $count = (int)$saved['count'];
+        }
+    }
+
+    if ($count >= $limit) {
+        @flock($fp, LOCK_UN);
+        @fclose($fp);
+        $retryAfter = max(1, $windowEnd - $now);
+        header('X-RateLimit-Retry-After: ' . $retryAfter);
+        json_response(429, [
+            'error'      => 'rate_limited',
+            'message'    => '操作过于频繁，每分钟最多 ' . $limit . ' 次，请 ' . $retryAfter . ' 秒后重试',
+            'retry_after' => $retryAfter,
+        ]);
+    }
+
+    ftruncate($fp, 0);
+    rewind($fp);
+    fwrite($fp, json_encode(['window' => $windowStart, 'count' => $count + 1]));
+    fflush($fp);
+
+    @flock($fp, LOCK_UN);
+    @fclose($fp);
+}
+
 // ── 执行 IP 速率限制（放在最后，依赖上面的辅助函数） ──
 apply_ip_rate_limit();
 
