@@ -444,6 +444,7 @@ const S = {
   activeChat: null,       // { id, type:'channel'|'private', name, ... }
   messages: {},
   pollingTimer: null,
+  pollGen: 0,           // 每次 startPolling 递增；用于丢弃切换对话前已发出的过期 poll 响应
   lastPollId: 0,
   joinedChannelIds: new Set(),
 };
@@ -657,6 +658,7 @@ async function sendFileMessage(fileId, fileType, uploadData) {
 /* ── 长轮询 ── */
 function startPolling() {
   stopPolling();
+  S.pollGen++;   // 使所有飞行中的旧 poll 响应在返回时被判定为过期
   poll();
 }
 
@@ -667,6 +669,7 @@ function stopPolling() {
 async function poll() {
   if (!S.activeChat || !S.token) { S.pollingTimer = setTimeout(poll, 3000); return; }
 
+  const genAtStart = S.pollGen;   // 快照本轮所属"代"，用于丢弃过期响应
   try {
     let url;
     if (S.activeChat.type === 'channel') {
@@ -683,6 +686,10 @@ async function poll() {
     const headers = { 'Authorization': 'Bearer ' + S.token };
     const res = await fetch(api(url), { headers });
     const data = await res.json();
+
+    // 响应返回时若用户已切换过对话（startPolling 递增了 pollGen），
+    // 丢弃本批过期结果：避免把已读消息重新计入未读、或插入到错误会话
+    if (genAtStart !== S.pollGen) return;
 
     if (data.messages && data.messages.length > 0) {
       // 分组：频道消息按 channel_id，私聊按 private_chat_id
@@ -721,7 +728,7 @@ async function poll() {
             }
           }
         }
-        // 其他频道：缓存消息 + 未读数 +1
+        // 其他频道：仅缓存消息（未读数以服务端为准，由 loadChannelsSilent 每轮刷新）
         for (const cid of Object.keys(byChannel)) {
           if (parseInt(cid, 10) === S.activeChat.id) continue;
           const key = 'channel_' + cid;
@@ -732,11 +739,6 @@ async function poll() {
               S.messages[key].push(m);
               existingIds.add(m.id);
             }
-          }
-          const ch = S.channels.find(c => c.id === parseInt(cid, 10));
-          if (ch) {
-            // poll 返回的都是 > since_id 的新消息且不含自己发的，全部计入未读
-            ch.unread_count = (ch.unread_count || 0) + byChannel[cid].length;
           }
         }
       } else {
@@ -782,8 +784,9 @@ async function poll() {
       renderSidebar();
     }
 
-    // 同时刷新私聊列表（检查新消息/未读数）
+    // 同时刷新私聊列表与频道未读（检查新消息/未读数，覆盖本地旧值）
     try { await loadPrivateChatsSilent(); } catch(e) {}
+    try { await loadChannelsSilent(); } catch(e) {}
 
   } catch(e) { /* 网络错误静默处理 */ }
 
@@ -795,6 +798,23 @@ async function loadPrivateChatsSilent() {
   const data = await get('/api/private/list.php');
   S.privateChats = data.chats || [];
   renderSidebar();
+}
+
+// 静默刷新频道未读数（权威在服务端：read.php 更新 last_read_message_id 后由 list.php 计算）。
+// 不整体替换 S.channels，只更新 unread_count，避免丢失 activeChat.channel 等引用。
+async function loadChannelsSilent() {
+  if (!S.token) return;
+  const data = await get('/api/channels/list.php');
+  const unreadMap = new Map();
+  for (const c of (data.channels || [])) unreadMap.set(c.id, c.unread_count || 0);
+  let changed = false;
+  for (const ch of S.channels) {
+    if (unreadMap.has(ch.id) && ch.unread_count !== unreadMap.get(ch.id)) {
+      ch.unread_count = unreadMap.get(ch.id);
+      changed = true;
+    }
+  }
+  if (changed) renderSidebar();
 }
 
 /* ── 选择对话 ── */
@@ -819,6 +839,8 @@ function selectPrivate(chatId) {
   const pc = S.privateChats.find(c => c.id === chatId);
   if (!pc) return;
   S.activeChat = { id: pc.id, type: 'private', name: pc.other_username, otherUserId: pc.other_user_id, pc };
+  // 本地未读清零（服务端已读由 history.php / poll 置位）
+  pc.unread_count = 0;
   localStorage.setItem('lc_last_chat', JSON.stringify({ type: 'private', id: pc.id }));
   renderSidebar();
   renderMain();
@@ -947,7 +969,7 @@ function renderSidebar() {
     const active = S.activeChat && S.activeChat.type === 'private' && S.activeChat.id === pc.id;
     pvHtml += '<li class="' + (active ? 'active' : '') + '" onclick="selectPrivate(' + pc.id + ')">' +
       '💬 ' + esc(pc.other_username) +
-      (pc.unread_count > 0 ? '<span class="unread">' + pc.unread_count + '</span>' : '') +
+      (!active && pc.unread_count > 0 ? '<span class="unread">' + pc.unread_count + '</span>' : '') +
       '</li>';
   }
   privateList.innerHTML = pvHtml;
