@@ -56,6 +56,7 @@ button:disabled{opacity:.4}
   display:flex;align-items:center;gap:12px;padding:10px 12px;
   background:var(--card);border-radius:16px;min-height:60px;cursor:pointer;
   transition:transform .05s,opacity .15s;position:relative;
+  margin:1px 0;
 }
 .userlist:active{opacity:.6;transform:scale(.985)}
 .head{
@@ -407,10 +408,11 @@ function toggleSection(key) {
   if (title) title.classList.toggle('collapsed', v);
   if (body) body.classList.toggle('collapsed', v);
 }
+const SECTION_DEFAULTS = { channels: false, private: false, users: true }; // 所有用户默认折叠
 function sectionHTML(key, label, bodyHtml) {
   const c = getCollapsed();
-  const collapsed = c[key] === true;
-  const open = c[key] === false || collapsed === false;
+  const v = c[key] === undefined ? (SECTION_DEFAULTS[key] || false) : c[key];
+  const collapsed = v === true;
   return '<div class="section-title' + (collapsed ? ' collapsed' : '') + '" data-sec="' + key + '" onclick="toggleSection(\'' + key + '\')"><span class="arrow">▼</span>' + esc(label) + '</div>' +
     '<div class="section-body' + (collapsed ? ' collapsed' : '') + '" data-secbody="' + key + '">' + bodyHtml + '</div>';
 }
@@ -534,7 +536,16 @@ async function loadHistory() {
 // ── 渲染消息 ──
 function isSelfMsg(m, uid) { return m.user_id === uid || m.from_user_id === uid; }
 function senderKeyOf(m) { return m.user_id || m.from_user_id || 0; }
-function scrollBottom(box) { requestAnimationFrame(() => { box.scrollTop = box.scrollHeight; }); }
+// 页面滚动容器是 window（#box 无固定高度不产生滚动条）
+function isNearBottom() {
+  const doc = document.documentElement;
+  return window.innerHeight + window.scrollY >= doc.scrollHeight - 70;
+}
+function scrollBottom() {
+  window.scrollTo(0, document.body.scrollHeight);
+  requestAnimationFrame(() => window.scrollTo(0, document.body.scrollHeight));
+  setTimeout(() => window.scrollTo(0, document.body.scrollHeight), 150); // 图片等异步内容加载后兜底
+}
 function isNearBottom(box) { return box.scrollTop + box.clientHeight >= box.scrollHeight - 70; }
 
 // 单条消息 HTML（内部维护 S.lastMsgTime / S.lastMsgUserId 做时间分隔与连续分组）
@@ -584,7 +595,14 @@ function renderMessages() {
   if (S.messages.length === 0) {
     box.innerHTML = '<div class="system-message-text" style="margin-top:30px">暂无消息，说点什么吧 👋</div>';
   }
-  scrollBottom(box);
+  scrollBottom();
+  // #box 内图片异步加载后若仍在底部则跟随滚底（capture 捕获 load）
+  if (!box._imgLoadBound) {
+    box._imgLoadBound = true;
+    box.addEventListener('load', e => {
+      if (e.target && e.target.tagName === 'IMG' && isNearBottom()) scrollBottom();
+    }, true);
+  }
 }
 
 // 增量追加（轮询新消息 / 本地发送），上翻阅读时不打扰
@@ -592,7 +610,7 @@ function appendMessages(msgs) {
   const box = document.getElementById('box');
   if (!box || !msgs || msgs.length === 0) return;
   const uid = S.user ? S.user.id : 0;
-  const stickBottom = isNearBottom(box);
+  const stickBottom = isNearBottom();
   let anySelf = false;
   const parts = [];
   for (const m of msgs) {
@@ -600,7 +618,7 @@ function appendMessages(msgs) {
     if (isSelfMsg(m, uid)) anySelf = true;
   }
   box.insertAdjacentHTML('beforeend', parts.join(''));
-  if (stickBottom || anySelf) scrollBottom(box);
+  if (stickBottom || anySelf) scrollBottom();
 }
 
 function renderFileAttachment(m) {
@@ -714,7 +732,7 @@ async function pollChatbox() {
         appendMessages(fresh); // 增量上屏，正在翻历史时不打扰
         S.lastPollId = Math.max(data.latest_id || 0, fresh[fresh.length - 1].id || 0, S.lastPollId);
         // 频道：正停留在底部阅读 → 同步已读位置，回列表不残留红点
-        if (S.activeChat && S.activeChat.type === 'channel' && isNearBottom(document.getElementById('box'))) {
+        if (S.activeChat && S.activeChat.type === 'channel' && isNearBottom()) {
           api('/channels/read.php', { method: 'POST', body: JSON.stringify({ channel_id: S.activeChat.id }) }).catch(() => {});
         }
       }
@@ -778,6 +796,7 @@ async function goBack() {
   try {
     S.activeChat = null;
     showPage('chat');
+    window.scrollTo(0, 0); // 回列表从顶部看
     await initApp(); // 刷新列表（未读数以服务端为准）
     startPolling('list');
   } finally { _navBusy = false; }
