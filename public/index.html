@@ -80,6 +80,9 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC'
 .main-header .channel-meta { font-size:12px; color:var(--text-light); }
 .main-header .leave-btn { background:none; border:1px solid var(--danger); color:var(--danger); padding:4px 12px; border-radius:4px; font-size:12px; cursor:pointer; transition:var(--transition); }
 .main-header .leave-btn:hover { background:var(--danger); color:#fff; }
+.main-header .invite-btn { background:rgba(52,152,219,.1); border:1px solid rgba(52,152,219,.45); color:var(--primary); padding:4px 12px; border-radius:4px; font-size:12px; cursor:pointer; margin-right:8px; transition:var(--transition); }
+.main-header .invite-btn:hover { background:var(--primary); color:#fff; }
+.main-header .lock-hint { font-size:12px; color:var(--text-light); }
 .main-header .join-btn { background:var(--primary); color:#fff; border:none; padding:4px 12px; border-radius:4px; font-size:12px; cursor:pointer; transition:var(--transition); }
 .main-header .join-btn:hover { background:var(--primary-dark); }
 
@@ -371,17 +374,13 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC'
     <h3>＋ 创建频道</h3>
     <div class="form-group">
       <label>频道名称</label>
-      <input type="text" id="newChannelName" placeholder="英文标识，如 my-channel">
-    </div>
-    <div class="form-group">
-      <label>显示名称</label>
-      <input type="text" id="newChannelDisplay" placeholder="如：我的频道">
+      <input type="text" id="newChannelDisplay" placeholder="如：产品讨论、周末爬山群" maxlength="50">
     </div>
     <div class="form-group">
       <label>类型</label>
       <select id="newChannelType">
-        <option value="public">公开</option>
-        <option value="private">私密</option>
+        <option value="public">公开 · 所有人可见可加入</option>
+        <option value="private">私密 · 仅受邀成员可见可加入</option>
       </select>
     </div>
     <div class="form-group">
@@ -407,6 +406,22 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC'
     <div id="searchResults" style="max-height:200px;overflow-y:auto"></div>
     <div class="btn-row">
       <button class="btn-cancel" id="searchCancel">关闭</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════ Channel Invite Modal ═══════════ -->
+<div class="modal-overlay" id="inviteModal" style="display:none">
+  <div class="modal">
+    <h3>👥 邀请成员 <span id="inviteChannelLabel" style="font-size:13px;color:var(--text-light)"></span></h3>
+    <div class="form-group">
+      <label>搜索用户</label>
+      <input type="text" id="inviteUserInput" placeholder="输入用户名...">
+    </div>
+    <div id="inviteResults" style="max-height:200px;overflow-y:auto"></div>
+    <div class="error" id="inviteError"></div>
+    <div class="btn-row">
+      <button class="btn-cancel" id="inviteCancel">关闭</button>
     </div>
   </div>
 </div>
@@ -520,9 +535,12 @@ async function loadChannels() {
   renderSidebar();
 }
 
-async function createChannel(name, displayName, type, desc) {
-  await post('/api/channels/create.php', { name, display_name: displayName, type, description: desc || '' });
+async function createChannel(displayName, type, desc) {
+  // 内部英文标识由服务端自动生成，用户只需填显示名称
+  const r = await post('/api/channels/create.php', { display_name: displayName, type, description: desc || '' });
   await loadChannels();
+  if (r && r.channel_id) selectChannel(r.channel_id);  // 创建完直接进入
+  return r;
 }
 
 async function joinChannel(id) {
@@ -532,10 +550,55 @@ async function joinChannel(id) {
 }
 
 async function leaveChannel(id) {
-  await post('/api/channels/leave.php', { channel_id: id });
-  S.activeChat = null;
-  await loadChannels();
-  renderMain();
+  const ch = S.channels.find(c => c.id === id);
+  if (!ch) return;
+  const hint = ch.type === 'private' ? '\n（私密频道退出后需成员再次邀请才能进入）' : '';
+  if (!confirm('确定要退出频道「' + ch.display_name + '」吗？' + hint)) return;
+  try {
+    await post('/api/channels/leave.php', { channel_id: id });
+    if (S.activeChat && S.activeChat.type === 'channel' && S.activeChat.id === id) S.activeChat = null;
+    await loadChannels();
+    renderMain();
+  } catch(e) { alert(e.message); }
+}
+
+var inviteChannelId = 0;   // 当前邀请弹层作用的频道 ID
+
+async function showInviteMember(channelId) {
+  inviteChannelId = channelId;
+  const ch = S.channels.find(c => c.id === channelId);
+  document.getElementById('inviteChannelLabel').textContent = ch ? '# ' + ch.display_name : '';
+  document.getElementById('inviteUserInput').value = '';
+  document.getElementById('inviteResults').innerHTML = '';
+  document.getElementById('inviteError').textContent = '';
+  document.getElementById('inviteModal').style.display = '';
+  document.getElementById('inviteUserInput').focus();
+}
+
+async function hideInviteMember() { document.getElementById('inviteModal').style.display = 'none'; }
+
+async function inviteMember(userId, username, rowEl) {
+  if (!inviteChannelId) return;
+  if (rowEl && rowEl.dataset.done) return;
+  try {
+    await post('/api/channels/invite.php', { channel_id: inviteChannelId, user_id: userId });
+    if (rowEl) {
+      rowEl.dataset.done = '1';
+      rowEl.style.opacity = '.55';
+      rowEl.style.pointerEvents = 'none';
+      rowEl.innerHTML = '✅ 已邀请 ' + esc(username) + ' 加入';
+    }
+    await loadChannels();  // 刷新成员数（is_joined 状态对自己无变化，但保持列表同步）
+  } catch(e) {
+    if (rowEl && (e.message || '').indexOf('已是频道成员') !== -1) {
+      rowEl.dataset.done = '1';
+      rowEl.style.opacity = '.55';
+      rowEl.style.pointerEvents = 'none';
+      rowEl.innerHTML = '👌 ' + esc(username) + ' 已在频道中';
+    } else {
+      document.getElementById('inviteError').textContent = e.message || '邀请失败';
+    }
+  }
 }
 
 /* ── 私聊 ── */
@@ -821,6 +884,10 @@ async function loadChannelsSilent() {
 function selectChannel(channelId) {
   const ch = S.channels.find(c => c.id === channelId);
   if (!ch) return;
+  if (ch.type === 'private' && !S.joinedChannelIds.has(ch.id)) {
+    alert('🔒 私密频道需要频道成员邀请后才能进入');
+    return;
+  }
   S.activeChat = { id: ch.id, type: 'channel', name: ch.display_name, channel: ch };
   // 本地未读清零 + 记忆最后会话
   ch.unread_count = 0;
@@ -875,7 +942,16 @@ function renderMain() {
     headerMeta.textContent = ch.type === 'announcement' ? '公告频道' : (ch.type === 'private' ? '私密频道' : '公开频道') + ' · ' + ch.member_count + ' 人';
     if (S.joinedChannelIds.has(ch.id)) {
       const isSystem = ['general', 'announcements', 'help'].includes(ch.name);
-      headerActions.innerHTML = isSystem ? '' : '<button class="leave-btn" onclick="leaveChannel('+ch.id+')">退出</button>';
+      if (isSystem) {
+        headerActions.innerHTML = '';
+      } else if (ch.type === 'private') {
+        headerActions.innerHTML = '<button class="invite-btn" onclick="showInviteMember('+ch.id+')">👥 邀请成员</button>' +
+                                  '<button class="leave-btn" onclick="leaveChannel('+ch.id+')">退出</button>';
+      } else {
+        headerActions.innerHTML = '<button class="leave-btn" onclick="leaveChannel('+ch.id+')">退出</button>';
+      }
+    } else if (ch.type === 'private') {
+      headerActions.innerHTML = '<span class="lock-hint">🔒 私密频道 · 需成员邀请</span>';
     } else {
       headerActions.innerHTML = '<button class="join-btn" onclick="joinChannel('+ch.id+')">加入频道</button>';
     }
@@ -1334,9 +1410,10 @@ document.getElementById('settingsSave').onclick = async () => {
 function showCreateChannel() {
   document.getElementById('createChannelModal').style.display = '';
   document.getElementById('createChannelError').textContent = '';
-  document.getElementById('newChannelName').value = '';
   document.getElementById('newChannelDisplay').value = '';
   document.getElementById('newChannelDesc').value = '';
+  document.getElementById('newChannelType').value = 'public';
+  document.getElementById('newChannelDisplay').focus();
 }
 function hideCreateChannel() { document.getElementById('createChannelModal').style.display = 'none'; }
 
@@ -1396,19 +1473,35 @@ document.getElementById('logoutBtn').onclick = () => { hideSettings(); logout();
 document.getElementById('createChannelBtn').onclick = showCreateChannel;
 document.getElementById('createChannelCancel').onclick = hideCreateChannel;
 document.getElementById('createChannelConfirm').onclick = async () => {
-  const name = document.getElementById('newChannelName').value.trim();
   const display = document.getElementById('newChannelDisplay').value.trim();
   const type = document.getElementById('newChannelType').value;
   const desc = document.getElementById('newChannelDesc').value.trim();
   const errEl = document.getElementById('createChannelError');
-  if (!name || !display) { errEl.textContent = '请填写频道名称和显示名称'; return; }
+  if (!display) { errEl.textContent = '请填写频道名称'; return; }
   try {
-    await createChannel(name, display, type, desc);
+    await createChannel(display, type, desc);
     hideCreateChannel();
   } catch(e) { errEl.textContent = e.message; }
 };
 
 document.getElementById('searchCancel').onclick = hideSearchUser;
+document.getElementById('inviteCancel').onclick = hideInviteMember;
+document.getElementById('inviteUserInput').oninput = async function() {
+  const q = this.value.trim();
+  const resultsEl = document.getElementById('inviteResults');
+  const errEl = document.getElementById('inviteError');
+  if (errEl) errEl.textContent = '';
+  if (q.length < 1) { resultsEl.innerHTML = ''; return; }
+  try {
+    const users = await searchUsers(q);
+    if (users.length === 0) { resultsEl.innerHTML = '<div style="padding:8px;color:#888">未找到用户</div>'; return; }
+    resultsEl.innerHTML = users.map(u =>
+      '<div style="padding:8px;cursor:pointer;border-radius:6px" onmouseover="this.style.background=\'#f0f0f0\'" onmouseout="this.style.background=\'\'" onclick="inviteMember('+u.id+',\''+esc(u.username)+'\', this)">' +
+      '👤 ' + esc(u.username) + ' <span style="font-size:11px;color:#888">' + (u.nickname && u.nickname !== u.username ? esc(u.nickname) : '') + '</span>' +
+      '</div>'
+    ).join('');
+  } catch(e) { resultsEl.innerHTML = '<div style="color:#e74c3c;padding:8px">搜索失败</div>'; }
+};
 document.getElementById('searchUserInput').oninput = async function() {
   const q = this.value.trim();
   const resultsEl = document.getElementById('searchResults');

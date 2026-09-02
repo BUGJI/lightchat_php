@@ -464,6 +464,7 @@ return [
         'system_messages' => [
             'welcome' => '欢迎 {username} 加入 {channel}',
             'leave' => '{username} 离开了 {channel}',
+            'invite' => '{inviter} 邀请 {username} 加入了 {channel}',
             'kick' => '{username} 被移出频道',
             'mute' => '{username} 被禁言 {duration} 分钟',
             'unmute' => '{username} 已被解除禁言',

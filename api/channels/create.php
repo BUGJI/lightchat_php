@@ -43,18 +43,8 @@ $type        = trim($input['type'] ?? 'public');
 $description = trim($input['description'] ?? '');
 
 // ── 参数校验 ──
-if ($name === '' || $displayName === '') {
-    json_response(400, ['error' => 'missing_fields', 'message' => '频道名称和显示名称不能为空']);
-}
-
-// 频道名格式：字母数字下划线
-if (!preg_match('/^[a-zA-Z0-9_]+$/', $name)) {
-    json_response(400, ['error' => 'invalid_name', 'message' => '频道名称只能包含字母、数字和下划线']);
-}
-
-$nameLen = strlen($name);
-if ($nameLen < 2 || $nameLen > 50) {
-    json_response(400, ['error' => 'invalid_name', 'message' => '频道名称长度应在 2-50 个字符']);
+if ($displayName === '') {
+    json_response(400, ['error' => 'missing_fields', 'message' => '频道名称不能为空']);
 }
 
 // 频道类型校验
@@ -63,10 +53,36 @@ if (!in_array($type, $allowedTypes)) {
     json_response(400, ['error' => 'invalid_type', 'message' => '频道类型无效，可选: public, private']);
 }
 
-// 检查重名
-$existing = $db->get('channels', ['name' => $name]);
-if ($existing) {
-    json_response(409, ['error' => 'duplicate_name', 'message' => '频道名称已被使用']);
+// 内部英文标识：客户端可不传，由服务端自动生成唯一标识；
+// 显式传入时仍按旧规则校验（兼容第三方调用）
+if ($name === '') {
+    for ($i = 0; $i < 5; $i++) {
+        $genName = 'ch_' . base_convert((string)(int)(microtime(true) * 1000), 10, 36)
+                 . substr(md5(uniqid('', true)), 0, 4);
+        if (!$db->get('channels', ['name' => $genName])) {
+            $name = $genName;
+            break;
+        }
+    }
+    if ($name === '') {
+        json_response(500, ['error' => 'name_gen_failed', 'message' => '频道标识生成失败，请重试']);
+    }
+} else {
+    // 频道名格式：字母数字下划线
+    if (!preg_match('/^[a-zA-Z0-9_]+$/', $name)) {
+        json_response(400, ['error' => 'invalid_name', 'message' => '频道名称只能包含字母、数字和下划线']);
+    }
+
+    $nameLen = strlen($name);
+    if ($nameLen < 2 || $nameLen > 50) {
+        json_response(400, ['error' => 'invalid_name', 'message' => '频道名称长度应在 2-50 个字符']);
+    }
+
+    // 检查重名
+    $existing = $db->get('channels', ['name' => $name]);
+    if ($existing) {
+        json_response(409, ['error' => 'duplicate_name', 'message' => '频道名称已被使用']);
+    }
 }
 
 // ── 创建频道 ──
