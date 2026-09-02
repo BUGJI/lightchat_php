@@ -60,11 +60,13 @@ foreach ($channels as $ch) {
     }
 
     // 未读数：当前用户已加入频道中，id 大于 last_read_message_id 的未删除消息数
+    // （排除自己发的消息——发送者自己发的消息不应计入自己的未读红点）
     $unreadCount = 0;
     if ($user && isset($lastReadMap[(int)$ch['id']])) {
         $where = [
             'channel_id' => $ch['id'],
             'id > :id'   => $lastReadMap[(int)$ch['id']],
+            'user_id != ' => $user['id'],
         ];
         if (!role_at_least($user['role'], 'admin')) {
             $where['is_deleted != '] = 1;
