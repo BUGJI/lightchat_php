@@ -41,30 +41,40 @@ class PushPlusNotifier extends NotificationBase
 
         $payload = json_encode([
             'token'    => $token,
-            'title'    => mb_substr($title, 0, 100, 'UTF-8'),  // PushPlus 标题限制 100 字符
+            'title'    => $this->utf8Substr($title, 100),  // PushPlus 标题限制 100 字符
             'content'  => $content,
             'template' => $this->config['template'] ?? 'html', // html / txt / json / markdown
             'channel'  => $this->config['channel'] ?? 'wechat',
         ], JSON_UNESCAPED_UNICODE);
 
-        $ch = curl_init();
-        curl_setopt_array($ch, [
-            CURLOPT_URL            => $apiUrl,
-            CURLOPT_POST           => true,
-            CURLOPT_POSTFIELDS     => $payload,
-            CURLOPT_HTTPHEADER     => ['Content-Type: application/json'],
-            CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_TIMEOUT        => (int)($this->config['timeout'] ?? 10),
-            CURLOPT_SSL_VERIFYPEER => false,
-        ]);
+        // curl 可用时优先使用 curl，否则回退到 file_get_contents 流
+        if (function_exists('curl_init')) {
+            $ch = curl_init();
+            curl_setopt_array($ch, [
+                CURLOPT_URL            => $apiUrl,
+                CURLOPT_POST           => true,
+                CURLOPT_POSTFIELDS     => $payload,
+                CURLOPT_HTTPHEADER     => ['Content-Type: application/json'],
+                CURLOPT_RETURNTRANSFER => true,
+                CURLOPT_TIMEOUT        => (int)($this->config['timeout'] ?? 10),
+                CURLOPT_SSL_VERIFYPEER => false,
+            ]);
 
-        $response = curl_exec($ch);
-        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-        $error = curl_error($ch);
-        curl_close($ch);
+            $response = curl_exec($ch);
+            $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+            $error = curl_error($ch);
+            curl_close($ch);
 
-        if ($error) {
-            return ['success' => false, 'message' => 'PushPlus 请求失败: ' . $error];
+            if ($error) {
+                return ['success' => false, 'message' => 'PushPlus 请求失败: ' . $error];
+            }
+        } else {
+            $result = $this->sendViaStream($apiUrl, $payload);
+            if ($result === null) {
+                return ['success' => false, 'message' => 'PushPlus 请求失败: 网络不可用'];
+            }
+            $httpCode = 200;
+            $response = json_encode($result, JSON_UNESCAPED_UNICODE);
         }
 
         $result = json_decode($response, true);
@@ -79,6 +89,46 @@ class PushPlusNotifier extends NotificationBase
             'success' => false,
             'message' => 'PushPlus 推送失败: ' . ($result['msg'] ?? '未知错误'),
         ];
+    }
+
+    /**
+     * UTF-8 安全截断（按字符数），不依赖 mbstring / iconv
+     * 供标题等有限制长度的字段使用
+     */
+    private function utf8Substr($str, $limit)
+    {
+        if (function_exists('mb_substr')) {
+            return mb_substr($str, 0, $limit, 'UTF-8');
+        }
+        if ($str === '' || $limit <= 0) {
+            return '';
+        }
+        // 纯 PHP 逐字符解析 UTF-8
+        $out = '';
+        $count = 0;
+        $len = strlen($str);
+        $i = 0;
+        while ($i < $len && $count < $limit) {
+            $b = ord($str[$i]);
+            if ($b < 0x80) {
+                $out .= $str[$i];
+                $i += 1;
+            } elseif (($b & 0xE0) === 0xC0) {
+                $out .= substr($str, $i, 2);
+                $i += 2;
+            } elseif (($b & 0xF0) === 0xE0) {
+                $out .= substr($str, $i, 3);
+                $i += 3;
+            } elseif (($b & 0xF8) === 0xF0) {
+                $out .= substr($str, $i, 4);
+                $i += 4;
+            } else {
+                $out .= $str[$i];
+                $i += 1;
+            }
+            $count++;
+        }
+        return $out;
     }
 
     /**

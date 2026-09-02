@@ -31,11 +31,13 @@ class NotificationManager
      */
     private function registerBuiltins()
     {
-        // 邮件（只有显式 enabled 且配置了 SMTP 才注册，避免未配置时白白实例化）
+        // 邮件（只有显式 enabled 且配置了真实 SMTP 才注册，避免未配置时白白实例化）
         if (($this->config['email']['enabled'] ?? false)) {
             $emailCfg = $this->config['email'] ?? [];
             $smtp = isset($emailCfg['smtp']) ? $emailCfg['smtp'] : [];
-            if (!empty($smtp['host']) && !empty($smtp['username'])) {
+            $smtpReady = !empty($smtp['host']) && !empty($smtp['username']) && !empty($smtp['password'])
+                && strpos($smtp['host'], 'example.com') === false;
+            if ($smtpReady) {
                 $this->notifiers['email'] = new EmailNotifier($emailCfg);
             }
         }

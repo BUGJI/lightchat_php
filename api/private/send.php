@@ -139,7 +139,8 @@ try {
             if (!isset($toUserFull['notification_private_enabled']) || (bool)$toUserFull['notification_private_enabled']) {
                 $notifMgr = new NotificationManager($enabledMethods);
                 $messageDataForNotif = [
-                    'nickname'         => $user['username'] ?? $user['nickname'] ?? '未知用户',
+                    // {nickname} 指接收者本人（模板问候语），勿用发送者覆盖
+                    'nickname'         => $toUserFull['nickname'] ?? $toUserFull['username'] ?? '用户',
                     'unread_count'     => 1,
                     'messages_preview' => mb_substr($content, 0, 100, 'UTF-8'),
                     'sender_name'      => $user['username'] ?? $user['nickname'] ?? '未知用户',

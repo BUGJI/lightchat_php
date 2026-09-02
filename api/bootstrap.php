@@ -308,6 +308,33 @@ function check_user_banned($db, $user) {
     }
 }
 
+/**
+ * 获取服务器当前可用的通知方式
+ * pushplus / webhook 为用户级凭据（默认可用）；email 依赖 SMTP 配置
+ * @return array<int, string> 可用方式 id 列表，如 ['pushplus','webhook']
+ */
+function notification_available_methods($config)
+{
+    $available = [];
+    $methods = isset($config['notifications']['methods']) ? $config['notifications']['methods'] : [];
+
+    foreach ($methods as $name => $cfg) {
+        if (empty($cfg['enabled'])) {
+            continue;
+        }
+        if ($name === 'email') {
+            // 邮件需真实 SMTP（host + username + password），占位配置不算可用
+            $smtp = isset($cfg['smtp']) ? $cfg['smtp'] : [];
+            if (empty($smtp['host']) || empty($smtp['username']) || empty($smtp['password'])
+                || strpos($smtp['host'], 'example.com') !== false) {
+                continue;
+            }
+        }
+        $available[] = $name;
+    }
+    return $available;
+}
+
 function authenticate() {
     global $db, $config;
 

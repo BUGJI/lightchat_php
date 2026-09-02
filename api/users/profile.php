@@ -86,6 +86,8 @@ if ($method === 'GET') {
                 'template'      => $user['notification_template'] 
                     ? json_decode($user['notification_template'], true) 
                     : null,
+                // 服务器当前可用的通知方式（供前端渲染选项）
+                'available_methods' => notification_available_methods($config),
             ],
         ];
 
@@ -246,6 +248,20 @@ if ($method === 'POST') {
         $mode = trim($input['notification_mode']);
         if (!in_array($mode, $validModes, true)) {
             json_response(400, ['error' => 'invalid_notification_mode', 'message' => '通知方式仅支持: none / email / pushplus / webhook']);
+        }
+        if ($mode !== 'none') {
+            $available = notification_available_methods($config);
+            if (!in_array($mode, $available, true)) {
+                $tips = [
+                    'email'    => '邮件通知需要管理员在 config.php 中配置真实 SMTP 并启用',
+                    'pushplus' => '服务器未启用 PushPlus 通知',
+                    'webhook'  => '服务器未启用 Webhook 通知',
+                ];
+                json_response(400, [
+                    'error'   => 'notification_method_disabled',
+                    'message' => isset($tips[$mode]) ? $tips[$mode] : '服务器未启用该通知方式',
+                ]);
+            }
         }
         if ($mode === 'email' && empty($user['email']) && empty($input['notification_email'])) {
             json_response(400, ['error' => 'missing_email', 'message' => '选择邮件通知时需填写邮箱']);

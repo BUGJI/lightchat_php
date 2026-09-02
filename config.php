@@ -427,7 +427,7 @@ return [
             ],
 
             'pushplus' => [
-                'enabled' => false,                  // 默认关闭：启用前请填写真实 PushPlus Token
+                'enabled' => true,                   // 默认启用：Token 为用户级（个人设置里填写），服务器无需全局凭据
                 'label'   => 'PushPlus',
                 'api_url' => 'https://www.pushplus.plus/send',
                 'channel' => 'wechat',                 // wechat / sms / mail / webhook
@@ -445,7 +445,7 @@ return [
             ],
 
             'webhook' => [
-                'enabled' => false,                  // 默认关闭：启用前请配置用户级 Webhook URL
+                'enabled' => true,                   // 默认启用：URL 为用户级（个人设置里填写），服务器无需全局凭据
                 'label'   => 'Webhook',
                 'timeout' => 10,
                 'templates' => [
