@@ -671,10 +671,19 @@ function buildMessageHTML(m, uid) {
   if (showName) {
     html += '<div class="message-sender-name">' + esc(m.username || ('用户' + key)) + '</div>';
   }
-  html += '<div class="message-text' + (self ? ' selfmessage' : '') + '">' +
-    esc(m.content || '') +
-    (m.file_url ? renderFileAttachment(m) : '') +
-    '</div>';
+  // 单图片消息（image 类型且无文字）：透明无边框大图，不套气泡背景（与桌面端一致）
+  const imgOnly = m.type === 'image' && m.file_url && !(m.content || '').trim();
+  if (imgOnly) {
+    const fullUrl = safeFileUrl(m.file_url);
+    html += '<div class="message-text' + (self ? ' selfmessage' : '') + ' img">' +
+      '<img class="msg-img" src="' + esc(fullUrl) + '" alt="" onclick="showImg(\'' + js(fullUrl) + '\')">' +
+      '</div>';
+  } else {
+    html += '<div class="message-text' + (self ? ' selfmessage' : '') + '">' +
+      esc(m.content || '') +
+      (m.file_url ? renderFileAttachment(m) : '') +
+      '</div>';
+  }
   return html;
 }
 
