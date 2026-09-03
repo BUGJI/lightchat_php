@@ -606,7 +606,6 @@ function scrollBottom() {
   requestAnimationFrame(() => window.scrollTo(0, document.body.scrollHeight));
   setTimeout(() => window.scrollTo(0, document.body.scrollHeight), 150); // 图片等异步内容加载后兜底
 }
-function isNearBottom(box) { return box.scrollTop + box.clientHeight >= box.scrollHeight - 70; }
 
 // 单条消息 HTML（内部维护 S.lastMsgTime / S.lastMsgUserId 做时间分隔与连续分组）
 function buildMessageHTML(m, uid) {
