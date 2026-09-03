@@ -108,6 +108,17 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC'
 .msg .file-attach { margin-top:4px; }
 .msg .file-attach a { color:var(--primary-dark); font-size:13px; }
 .msg .file-attach img { max-width:200px; max-height:200px; border-radius:8px; cursor:pointer; }
+/* 添加好友/群组搜索结果 */
+.sr-group-title { font-size:12px; font-weight:600; color:var(--text-light); margin:10px 2px 4px; }
+.sr-row { display:flex; align-items:center; gap:10px; padding:8px 6px; border-radius:6px; cursor:pointer; }
+.sr-row:hover { background:rgba(0,0,0,.05); }
+.sr-name { flex:0 1 auto; font-size:14px; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.sr-meta { flex:1; font-size:12px; color:var(--text-light); min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; text-align:left; }
+.sr-tag { flex:none; font-size:12px; border-radius:4px; padding:2px 8px; }
+.sr-tag.tag-join { background:var(--primary); color:#fff; }
+.sr-tag.tag-muted { background:rgba(0,0,0,.06); color:var(--text-light); }
+[data-theme="dark"] .sr-row:hover { background:rgba(255,255,255,.08); }
+[data-theme="dark"] .sr-tag.tag-muted { background:rgba(255,255,255,.12); }
 #imgViewer{display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.95);z-index:9999;cursor:pointer}
 #imgViewerImg{max-width:90%;max-height:90%;position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);border-radius:12px;box-shadow:0 4px 30px rgba(0,0,0,.5);cursor:default;transition:transform .15s}
 
@@ -228,6 +239,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC'
     <div class="sidebar-header">
       <h2>LightChat</h2>
       <div style="display:flex;align-items:center;gap:2px">
+        <button class="settings-btn" id="discoverBtn" title="添加好友 / 群组" style="font-size:16px">➕</button>
         <button class="settings-btn" id="themeToggleBtn" title="切换主题">🌙</button>
         <button class="settings-btn" id="settingsBtn" title="设置">⚙️</button>
       </div>
@@ -399,15 +411,14 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC'
   </div>
 </div>
 
-<!-- ═══════════ User Search Modal ═══════════ -->
+<!-- ═══════════ 添加好友 / 群组 Modal ═══════════ -->
 <div class="modal-overlay" id="searchModal" style="display:none">
-  <div class="modal">
-    <h3>🔍 发起私聊</h3>
+  <div class="modal" style="max-width:420px">
+    <h3>🔍 添加好友 / 群组</h3>
     <div class="form-group">
-      <label>搜索用户</label>
-      <input type="text" id="searchUserInput" placeholder="输入用户名...">
+      <input type="text" id="searchUserInput" placeholder="搜索频道名称或用户名..." autocomplete="off">
     </div>
-    <div id="searchResults" style="max-height:200px;overflow-y:auto"></div>
+    <div id="searchResults" style="max-height:300px;overflow-y:auto"></div>
     <div class="btn-row">
       <button class="btn-cancel" id="searchCancel">关闭</button>
     </div>
@@ -1184,24 +1195,25 @@ function renderMessageList(msgs, keepState) {
 }
 
 function renderSidebar() {
-  // 频道列表
+  // 频道列表：只展示已加入的频道；未加入频道（公开/私密）一律不占行，
+  // 通过 header ➕ 搜索入口发现（公开可加入，私密仅成员可搜/加入由邀请）
   const channelList = document.getElementById('channelList');
   let chHtml = '';
   for (const ch of S.channels) {
+    if (!S.joinedChannelIds.has(ch.id)) continue;
     const active = S.activeChat && S.activeChat.type === 'channel' && S.activeChat.id === ch.id;
     const icon = ch.type === 'announcement' ? '📢' : (ch.type === 'private' ? '🔒' : '#');
     const unread = (!active && ch.unread_count > 0) ? '<span class="unread">' + Math.min(ch.unread_count, 99) + '</span>' : '';
     chHtml += '<li class="' + (active ? 'active' : '') + '" onclick="selectChannel(' + ch.id + ')">' +
       icon + ' ' + esc(ch.display_name) +
-      '<span class="badge">' + (S.joinedChannelIds.has(ch.id) ? '✓' : '') + '</span>' +
       unread +
       '</li>';
   }
-  channelList.innerHTML = chHtml;
+  channelList.innerHTML = chHtml || '<li style="opacity:.55;font-size:13px;cursor:default">暂无频道，点右上 ➕ 搜索加入</li>';
 
-  // 私聊列表
+  // 私聊列表（发起新私聊统一走 header ➕ 入口）
   const privateList = document.getElementById('privateList');
-  let pvHtml = '<li style="cursor:pointer;opacity:.7;font-size:13px" onclick="showSearchUser()">＋ 发起私聊</li>';
+  let pvHtml = '';
   for (const pc of S.privateChats) {
     const active = S.activeChat && S.activeChat.type === 'private' && S.activeChat.id === pc.id;
     pvHtml += '<li class="' + (active ? 'active' : '') + '" onclick="selectPrivate(' + pc.id + ')">' +
@@ -1209,7 +1221,7 @@ function renderSidebar() {
       (!active && pc.unread_count > 0 ? '<span class="unread">' + pc.unread_count + '</span>' : '') +
       '</li>';
   }
-  privateList.innerHTML = pvHtml;
+  privateList.innerHTML = pvHtml || '<li style="opacity:.55;font-size:13px;cursor:default">暂无私聊，点右上 ➕ 搜索用户</li>';
 
   // 用户信息
   if (S.user) {
@@ -1578,13 +1590,78 @@ function showCreateChannel() {
 }
 function hideCreateChannel() { document.getElementById('createChannelModal').style.display = 'none'; }
 
-async function showSearchUser() {
-  document.getElementById('searchModal').style.display = '';
-  document.getElementById('searchUserInput').value = '';
-  document.getElementById('searchResults').innerHTML = '';
-  document.getElementById('searchUserInput').focus();
-}
+/* ── 添加好友 / 群组（统一搜索入口）── */
 function hideSearchUser() { document.getElementById('searchModal').style.display = 'none'; }
+
+// 打开发现弹层：空查询时列出可加入的公开频道作为推荐
+async function showSearchUser() {
+  const input = document.getElementById('searchUserInput');
+  input.value = '';
+  input.focus();
+  document.getElementById('searchModal').style.display = '';
+  renderDiscoverRecommend();
+}
+
+// 可加入的公开频道（未加入）推荐，帮用户发现新群
+function renderDiscoverRecommend() {
+  const box = document.getElementById('searchResults');
+  const open = S.channels.filter(ch => ch.type === 'public' && !S.joinedChannelIds.has(ch.id));
+  let html = '<div style="color:var(--text-light);font-size:12px;padding:2px 2px 6px">输入关键词可同时搜索群组与用户</div>';
+  if (open.length) {
+    html += '<div class="sr-group-title">可加入的公开频道 (' + open.length + ')</div>';
+    html += open.map(discoverChanRow).join('');
+  } else {
+    html += '<div style="color:var(--text-light);font-size:13px;padding:8px 2px">暂无可加入的公开频道</div>';
+  }
+  box.innerHTML = html;
+}
+
+// 群组行 HTML（只对已加入或公开频道可见；私密频道仅成员/邀请，不参与发现）
+function discoverChanRow(ch) {
+  const joined = S.joinedChannelIds.has(ch.id);
+  const typeTxt = ch.type === 'private' ? '🔒 私密频道' : (ch.type === 'announcement' ? '📢 公告频道' : '公开频道');
+  const meta = typeTxt + ' · ' + ch.member_count + ' 人';
+  return '<div class="sr-row" onclick="' + (joined ? 'discoverOpenChannel' : 'discoverJoinChannel') + '(' + ch.id + ')">' +
+    '<span class="sr-name">' + (ch.type === 'private' ? '🔒 ' : (ch.type === 'announcement' ? '📢 ' : '# ')) + esc(ch.display_name) + '</span>' +
+    '<span class="sr-meta">' + meta + '</span>' +
+    '<span class="sr-tag ' + (joined ? 'tag-muted' : 'tag-join') + '">' + (joined ? '已加入' : '加入') + '</span>' +
+    '</div>';
+}
+// 用户行 HTML（点击发起私聊）
+function discoverUserRow(u) {
+  return '<div class="sr-row" onclick="startPrivateChat(' + u.id + ',\'' + esc(u.username) + '\')">' +
+    '<span class="sr-name">👤 ' + esc(u.username) + '</span>' +
+    '<span class="sr-meta">' + (u.nickname && u.nickname !== u.username ? esc(u.nickname) : '') + '</span>' +
+    '<span class="sr-tag tag-join">私聊</span>' +
+    '</div>';
+}
+async function discoverOpenChannel(id) { hideSearchUser(); selectChannel(id); }
+async function discoverJoinChannel(id) { hideSearchUser(); try { await joinChannel(id); } catch(e) { alert(e.message); } }
+
+async function discoverSearch(q) {
+  const box = document.getElementById('searchResults');
+  const kw = q.toLowerCase();
+  // 频道：已加入的全部 + 公开频道（私密未加入不参与搜索）
+  const chans = S.channels.filter(ch =>
+    (S.joinedChannelIds.has(ch.id) || ch.type === 'public') &&
+    ((ch.display_name || '').toLowerCase().indexOf(kw) !== -1 || (ch.name || '').toLowerCase().indexOf(kw) !== -1)
+  );
+  let html = '';
+  try {
+    const users = (await searchUsers(q)).filter(u => u.id !== (S.user ? S.user.id : 0));
+    if (chans.length) {
+      html += '<div class="sr-group-title">群组 (' + chans.length + ')</div>';
+      html += chans.map(discoverChanRow).join('');
+    }
+    if (users.length) {
+      html += '<div class="sr-group-title">用户 (' + users.length + ')</div>';
+      html += users.map(discoverUserRow).join('');
+    }
+    box.innerHTML = html || '<div style="color:var(--text-light);font-size:13px;padding:10px 2px">未找到匹配的群组或用户</div>';
+  } catch(e) {
+    box.innerHTML = '<div style="color:#e74c3c;padding:8px">搜索失败，请稍后再试</div>';
+  }
+}
 
 /* ── 辅助函数 ── */
 function esc(s) { if (!s) return ''; const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
@@ -1646,6 +1723,8 @@ document.getElementById('themeToggleBtn').onclick = () => {
 };
 initTheme();
 
+document.getElementById('discoverBtn').onclick = showSearchUser;
+
 document.getElementById('settingsBtn').onclick = showSettings;
 document.getElementById('settingsCancel').onclick = hideSettings;
 document.getElementById('logoutBtn').onclick = () => { hideSettings(); logout(); };
@@ -1683,18 +1762,10 @@ document.getElementById('inviteUserInput').oninput = async function() {
     ).join('');
   } catch(e) { resultsEl.innerHTML = '<div style="color:#e74c3c;padding:8px">搜索失败</div>'; }
 };
-document.getElementById('searchUserInput').oninput = async function() {
+document.getElementById('searchUserInput').oninput = function() {
   const q = this.value.trim();
-  const resultsEl = document.getElementById('searchResults');
-  if (q.length < 1) { resultsEl.innerHTML = ''; return; }
-  try {
-    const users = await searchUsers(q);
-    resultsEl.innerHTML = users.map(u =>
-      '<div style="padding:8px;cursor:pointer;border-radius:6px" onmouseover="this.style.background=\'#f0f0f0\'" onmouseout="this.style.background=\'\'" onclick="startPrivateChat('+u.id+',\''+esc(u.username)+'\')">' +
-      '👤 ' + esc(u.username) + ' <span style="font-size:11px;color:#888">' + (u.nickname && u.nickname !== u.username ? esc(u.nickname) : '') + '</span>' +
-      '</div>'
-    ).join('');
-  } catch(e) { resultsEl.innerHTML = '<div style="color:#e74c3c;padding:8px">搜索失败</div>'; }
+  if (q.length < 1) { renderDiscoverRecommend(); return; }
+  discoverSearch(q);
 };
 
 async function startPrivateChat(userId, username) {
