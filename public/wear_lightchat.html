@@ -730,7 +730,9 @@ function appendMessages(msgs) {
 
 function renderFileAttachment(m) {
   const fullUrl = safeFileUrl(m.file_url || '');
-  if (/\\.(jpg|jpeg|png|gif|webp)$/i.test(m.file_url || '')) {
+  // 图片判定：消息类型为 image（与桌面端一致）或 URL 带常见图片扩展名
+  const looksImage = m.type === 'image' || m.file_type === 'image' || /\.(jpg|jpeg|png|gif|webp|bmp|avif)$/i.test(m.file_url || '');
+  if (looksImage) {
     return '<br><img src="' + esc(fullUrl) + '" alt="" class="msg-img" onclick="showImg(\'' + js(fullUrl) + '\')">';
   }
   return '<br><a href="' + esc(fullUrl) + '" target="_blank" rel="noopener noreferrer">📎 ' + (m.file_size ? formatSize(m.file_size) : '文件') + '</a>';
