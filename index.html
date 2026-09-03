@@ -1,62 +1,18 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
-    <title>入口跳转 · 自适应</title>
-    <!-- 极简风格，0样式装饰，纯功能实现 -->
-</head>
-<body>
-    <!-- 
-        简易入口页面 - 增强版：
-        1. 访问后自动检测视口宽度/高度（基于屏幕或视口实际尺寸）。
-        2. 如果宽度 < 300px 或者 高度 < 300px，则跳转到 /public/wear_lightchat.html
-        3. 否则跳转到 /public/index.html
-        4. 不依赖任何第三方库，无华丽动画或复杂布局。
-        5. 若JavaScript被禁用，显示纯文本备用手动链接。
-    -->
-    <script>
-        (function() {
-            // 获取视口/窗口的宽高（支持移动端与桌面），兼容主流浏览器
-            // 使用 window.innerWidth / window.innerHeight 获取实际可视区尺寸。
-            // 如果因为安全沙箱或非常规环境无法获取，则fallback使用 screen.width/height 近似，
-            // 但绝大部分情况 window.innerWidth/Height 更准确反映“页面区域”。
-            var viewportWidth = window.innerWidth;
-            var viewportHeight = window.innerHeight;
-            
-            // 极端情况: 某些旧浏览器或iframe沙盒可能导致innerWidth为0? 做兜底处理:
-            // 若获取不到合理值(<=0)则尝试使用 screen.width / screen.height (设备屏幕分辨率)
-            // 但通常不会出现。为了稳健：
-            if (typeof viewportWidth !== 'number' || viewportWidth <= 0) {
-                viewportWidth = screen.width || 0;
-            }
-            if (typeof viewportHeight !== 'number' || viewportHeight <= 0) {
-                viewportHeight = screen.height || 0;
-            }
-
-            // 核心判断：宽度小于300 或 高度小于300 → 穿戴/超小屏专用页面
-            var isTinyDevice = (viewportWidth < 300) || (viewportHeight < 300);
-            
-            // 目标路径
-            var targetUrl = isTinyDevice ? '/public/wear_lightchat.html' : '/public/index.html';
-            
-            // 执行干净重定向（不留下当前入口页面历史记录，符合“跳转”预期）
-            // 使用 replace 避免用户按返回时反复回到这个入口判断页面
-            window.location.replace(targetUrl);
-        })();
-    </script>
-    
-    <!-- 优雅降级：如果 JavaScript 被禁用或者执行失败时，展示手动入口链接 -->
-    <noscript>
-        <div style="font-family: system-ui, monospace; margin: 2rem; padding: 1rem; text-align: center; line-height: 1.5;">
-            <p><strong>⚡ 轻量入口</strong> — 您的浏览器未启用 JavaScript，无法自动识别屏幕尺寸并跳转。</p>
+    <!-- 自动跳转不好用，所以改成手动简化了 -->
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
+        <title>Redirecting</title>
+    </head>
+    <body>
+        <div style="word-break: keep-all;">
             <p>请根据您的设备手动选择：</p>
-            <ul style="list-style: none; padding: 0;">
-                <li style="margin: 1rem 0;">🔹 标准界面：<a href="/public/index.html" style="text-decoration: underline;">/public/index.html</a></li>
-                <li style="margin: 1rem 0;">⌚ 超小屏/穿戴设备 (宽<300px 或 高<300px)：<a href="/public/wear_lightchat.html" style="text-decoration: underline;">/public/wear_lightchat.html</a></li>
-            </ul>
-            <p style="font-size: 0.8rem; color: #555;">提示：正常浏览器会自动跳转，无需手动点击。</p>
+            <div style="align:left">
+                <p><a href="/public/index.html" style="text-decoration: none;">标准界面：手机/电脑</a></p>
+                <p><a href="/public/wear_lightchat.html" style="text-decoration: none;">穿戴界面：手表/小屏幕设备</a></p>
+            </div>
         </div>
-    </noscript>
-</body>
+    </body>
 </html>
