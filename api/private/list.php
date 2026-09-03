@@ -31,6 +31,21 @@ foreach ($allChats as $chat) {
     $otherUserId = ($uid1 === $user['id']) ? $uid2 : $uid1;
     $otherUser   = $db->get('users', ['id' => $otherUserId]);
 
+    // 本端联系人元数据（备注/免打扰/删除）
+    $meta = $db->get('private_contact_meta', ['chat_id' => (int)$chat['id'], 'user_id' => $user['id']]);
+    $hidden = $meta ? (int)($meta['hidden'] ?? 0) : 0;
+    if ($hidden) {
+        // 删除好友=隐藏会话；若对方在删除之后又发来新消息则自动恢复（避免错过消息）
+        $lastAt = $chat['last_message_at'] ?? '';
+        $hiddenAt = $meta['hidden_at'] ?? '';
+        if (!$lastAt || !$hiddenAt || strcmp($lastAt, $hiddenAt) <= 0) {
+            continue; // 对方删除后无新消息 → 会话从自己列表消失
+        }
+        // 有新消息 → 恢复显示并清除隐藏标记
+        $db->update('private_contact_meta', ['hidden' => 0, 'hidden_at' => null, 'updated_at' => date('Y-m-d H:i:s')],
+            ['chat_id' => (int)$chat['id'], 'user_id' => $user['id']]);
+    }
+
     // 统计未读数
     $unread = $db->count('private_messages', [
         'chat_id'      => $chat['id'],
@@ -38,16 +53,22 @@ foreach ($allChats as $chat) {
         'is_read'      => 0,
     ]);
 
+    $otherUsername = $otherUser ? $otherUser['username'] : '未知用户';
+    $nickname = $meta ? trim((string)($meta['nickname'] ?? '')) : '';
+
     $chats[] = [
-        'id'               => (int)$chat['id'],
-        'other_user_id'    => $otherUserId,
-        'other_username'   => $otherUser ? $otherUser['username'] : '未知用户',
-        'other_avatar'     => $otherUser ? ($otherUser['avatar'] ?? null) : null,
-        'other_role'       => $otherUser ? ($otherUser['role'] ?? 'member') : null,
-        'last_message'     => $chat['last_message'] ?? '',
-        'last_message_at'  => $chat['last_message_at'] ?? '',
-        'unread_count'     => $unread,
-        'created_at'       => $chat['created_at'] ?? '',
+        'id'                 => (int)$chat['id'],
+        'other_user_id'      => $otherUserId,
+        'other_username'     => $otherUsername,
+        'other_display_name' => $nickname !== '' ? $nickname : $otherUsername,
+        'other_nickname'     => $nickname,
+        'other_avatar'       => $otherUser ? ($otherUser['avatar'] ?? null) : null,
+        'other_role'         => $otherUser ? ($otherUser['role'] ?? 'member') : null,
+        'dnd'                => $meta ? (int)($meta['dnd'] ?? 0) : 0,
+        'last_message'       => $chat['last_message'] ?? '',
+        'last_message_at'    => $chat['last_message_at'] ?? '',
+        'unread_count'       => $unread,
+        'created_at'         => $chat['created_at'] ?? '',
     ];
 }
 

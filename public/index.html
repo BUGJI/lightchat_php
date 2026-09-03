@@ -446,12 +446,14 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC'
   <div class="modal" style="max-width:420px">
     <h3>⚙️ 频道管理 <span id="mgChannelLabel" style="font-size:13px;color:var(--text-light)"></span></h3>
     <div id="mgMeta" style="font-size:13px;color:var(--text-light);margin-bottom:10px"></div>
+    <!-- 频道名称：owner 可编辑，member 只读锁死（防止误编辑） -->
+    <div class="form-group">
+      <label>频道名称</label>
+      <input type="text" id="mgDisplayName" maxlength="50" placeholder="频道显示名称">
+      <div style="font-size:12px;color:var(--text-light);margin-top:5px;display:none" id="mgLockTip">🔒 仅创建者可修改频道名称与权限</div>
+    </div>
     <!-- owner 专属设置区 -->
     <div id="mgOwnerArea" style="display:none">
-      <div class="form-group">
-        <label>频道名称</label>
-        <input type="text" id="mgDisplayName" maxlength="50" placeholder="频道显示名称">
-      </div>
       <div class="form-group">
         <label>频道权限</label>
         <select id="mgType">
@@ -472,6 +474,28 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC'
     <div class="btn-row" style="justify-content:space-between;margin-top:14px">
       <button class="leave-btn" id="mgActionBtn" style="display:none"></button>
       <button class="btn-cancel" id="manageCancel">关闭</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════ Contact Manage Modal（私聊对象：备注/免打扰/删除好友）═══════════ -->
+<div class="modal-overlay" id="contactModal" style="display:none">
+  <div class="modal" style="max-width:420px">
+    <h3>💬 联系人设置 <span id="ctLabel" style="font-size:13px;color:var(--text-light)"></span></h3>
+    <div id="ctMeta" style="font-size:13px;color:var(--text-light);margin-bottom:10px"></div>
+    <div class="form-group">
+      <label>备注（仅自己可见，留空取消）</label>
+      <input type="text" id="ctNickname" maxlength="30" placeholder="给 TA 起一个备注名">
+    </div>
+    <div class="form-group" style="display:flex;align-items:center;justify-content:space-between">
+      <label style="margin:0">免打扰 <span style="font-size:12px;color:var(--text-light)">新消息不提醒（红点仍计）</span></label>
+      <input type="checkbox" id="ctDnd" style="width:auto;height:auto">
+    </div>
+    <div class="error" id="ctError"></div>
+    <div class="btn-row" style="justify-content:flex-end;margin-top:12px">
+      <button class="leave-btn" style="margin-right:auto" onclick="deleteContact()">🗑️ 删除好友</button>
+      <button class="btn-cancel" id="contactCancel">取消</button>
+      <button class="join-btn" onclick="saveContact()">💾 保存</button>
     </div>
   </div>
 </div>
@@ -618,16 +642,20 @@ async function showChannelManage(channelId) {
   document.getElementById('mgMeta').textContent =
     typeTxt + '频道 · ' + ch.member_count + ' 人' + (isOwner ? ' · 你是创建者' : ' · 你是成员');
 
-  // owner 专属设置区
+  // 频道名称：owner 可编辑；member 锁死（可见但 disabled，防止误编辑）
+  const nameInput = document.getElementById('mgDisplayName');
+  nameInput.value = ch.display_name || '';
+  nameInput.disabled = !isOwner;
+  document.getElementById('mgLockTip').style.display = isOwner ? 'none' : '';
+  // owner 专属设置区（权限/描述/保存）
   const ownerArea = document.getElementById('mgOwnerArea');
   ownerArea.style.display = isOwner ? '' : 'none';
   if (isOwner) {
-    document.getElementById('mgDisplayName').value = ch.display_name || '';
     document.getElementById('mgType').value = ch.type || 'public';
     document.getElementById('mgDesc').value = ch.description || '';
   }
 
-  // 底部动作按钮
+  // 底部动作按钮（退出/解散统一放在管理弹层内）
   const actionBtn = document.getElementById('mgActionBtn');
   actionBtn.style.display = '';
   actionBtn.textContent = isOwner ? '🗑️ 解散频道' : '🚪 退出频道';
@@ -675,6 +703,11 @@ async function saveChannelSettings() {
   try {
     await post('/api/channels/update.php', { channel_id: manageChannelId, display_name: display_name, type: type, description: description });
     await loadChannels();
+    // 同步当前打开频道（若正打开该频道）的 header 名称
+    if (S.activeChat && S.activeChat.type === 'channel' && S.activeChat.id === manageChannelId) {
+      S.activeChat.name = display_name;
+      if (S.activeChat.channel) S.activeChat.channel.display_name = display_name;
+    }
     renderMain();
     // 刷新弹层中的 meta/入口
     showChannelManage(manageChannelId);
@@ -707,6 +740,75 @@ async function leaveChannel(id) {
     await loadChannels();
     renderMain();
   } catch(e) { alert(e.message); }
+}
+
+/* ── 联系人管理（私聊对象：备注 / 免打扰 / 删除好友）── */
+var contactChatId = 0;
+
+function hideContactManage() {
+  document.getElementById('contactModal').style.display = 'none';
+}
+
+async function showContactManage() {
+  if (!S.activeChat || S.activeChat.type !== 'private') return;
+  const chatId = S.activeChat.id;
+  const pc = S.privateChats.find(c => c.id === chatId);
+  const baseName = (pc && pc.other_display_name) || (pc && pc.other_username) || S.activeChat.name || '对方';
+  contactChatId = chatId;
+  document.getElementById('ctLabel').textContent = pc ? (pc.other_username || '') : '';
+  document.getElementById('ctMeta').textContent = '当前显示名：' + baseName;
+  document.getElementById('ctError').textContent = '';
+  document.getElementById('ctNickname').value = (pc && pc.other_nickname) || '';
+  document.getElementById('ctDnd').checked = !!(pc && pc.dnd);
+  document.getElementById('contactModal').style.display = '';
+  // 服务端为准再刷一次（防本地未同步）
+  try {
+    const r = await get('/api/private/contact.php?chat_id=' + chatId);
+    if (r && typeof r.nickname !== 'undefined') {
+      document.getElementById('ctNickname').value = r.nickname || '';
+      document.getElementById('ctDnd').checked = !!r.dnd;
+    }
+  } catch (e) { /* 读取失败用本地值 */ }
+}
+
+async function saveContact() {
+  if (!contactChatId) return;
+  const nickname = document.getElementById('ctNickname').value.trim();
+  const dnd = document.getElementById('ctDnd').checked ? 1 : 0;
+  const err = document.getElementById('ctError');
+  err.textContent = '';
+  try {
+    await post('/api/private/contact.php', { chat_id: contactChatId, action: 'update', nickname: nickname, dnd: dnd });
+    const pc = S.privateChats.find(c => c.id === contactChatId);
+    if (pc) {
+      pc.other_nickname = nickname;
+      pc.other_display_name = nickname || pc.other_username;
+      pc.dnd = dnd;
+    }
+    if (S.activeChat && S.activeChat.type === 'private' && S.activeChat.id === contactChatId) {
+      S.activeChat.name = nickname || (pc ? pc.other_username : S.activeChat.name);
+    }
+    renderSidebar();
+    renderMain();
+    hideContactManage();
+  } catch (e) {
+    err.textContent = e.message || '保存失败';
+  }
+}
+
+async function deleteContact() {
+  if (!contactChatId) return;
+  if (!confirm('确定删除该好友？\n会话将从你的列表移除（聊天记录保留）。\n对方再发消息时会自动重新出现。')) return;
+  try {
+    await post('/api/private/contact.php', { chat_id: contactChatId, action: 'delete' });
+    S.privateChats = S.privateChats.filter(c => c.id !== contactChatId);
+    if (S.activeChat && S.activeChat.type === 'private' && S.activeChat.id === contactChatId) S.activeChat = null;
+    hideContactManage();
+    renderSidebar();
+    renderMain();
+  } catch (e) {
+    document.getElementById('ctError').textContent = e.message || '删除失败';
+  }
 }
 
 var inviteChannelId = 0;   // 当前邀请弹层作用的频道 ID
@@ -1052,7 +1154,8 @@ function selectChannel(channelId) {
 function selectPrivate(chatId) {
   const pc = S.privateChats.find(c => c.id === chatId);
   if (!pc) return;
-  S.activeChat = { id: pc.id, type: 'private', name: pc.other_username, otherUserId: pc.other_user_id, pc };
+  const displayName = pc.other_display_name || pc.other_username;
+  S.activeChat = { id: pc.id, type: 'private', name: displayName, otherUserId: pc.other_user_id, pc };
   // 本地未读清零（服务端已读由 history.php / poll 置位）
   pc.unread_count = 0;
   localStorage.setItem('lc_last_chat', JSON.stringify({ type: 'private', id: pc.id }));
@@ -1093,11 +1196,9 @@ function renderMain() {
         headerActions.innerHTML = '';
       } else if (ch.type === 'private') {
         headerActions.innerHTML = '<button class="invite-btn" onclick="showInviteMember('+ch.id+')">👥 邀请成员</button>' +
-                                  '<button class="invite-btn" onclick="showChannelManage('+ch.id+')">⚙️ 管理</button>' +
-                                  '<button class="leave-btn" onclick="leaveChannel('+ch.id+')">退出</button>';
+                                  '<button class="invite-btn" onclick="showChannelManage('+ch.id+')">⚙️ 管理</button>';
       } else {
-        headerActions.innerHTML = '<button class="invite-btn" onclick="showChannelManage('+ch.id+')">⚙️ 管理</button>' +
-                                  '<button class="leave-btn" onclick="leaveChannel('+ch.id+')">退出</button>';
+        headerActions.innerHTML = '<button class="invite-btn" onclick="showChannelManage('+ch.id+')">⚙️ 管理</button>';
       }
     } else if (ch.type === 'private') {
       headerActions.innerHTML = '<span class="lock-hint">🔒 私密频道 · 需成员邀请</span>';
@@ -1106,7 +1207,7 @@ function renderMain() {
     }
   } else {
     headerMeta.textContent = '私聊';
-    headerActions.innerHTML = '';
+    headerActions.innerHTML = '<button class="invite-btn" onclick="showContactManage()">⚙️ 联系人管理</button>';
   }
 
   renderMessages();
@@ -1148,6 +1249,7 @@ function renderMessageList(msgs, keepState) {
   if (!keepState) { msgListLastTs = 0; msgListLastUserId = null; }
   let html = '';
   const uid = S.user ? S.user.id : 0;
+  const isPrivateChat = S.activeChat && S.activeChat.type === 'private'; // 私聊顶部已有对方名字，气泡上方不再重复
   for (const m of msgs) {
     if (m.type === 'system') {
       msgListLastUserId = null; // 系统消息打断连续分组，下一条普通消息重新显示发送者名
@@ -1161,7 +1263,7 @@ function renderMessageList(msgs, keepState) {
     }
     if (ts) msgListLastTs = ts;
     const senderId = m.user_id || m.from_user_id || 0;
-    const showName = !isSelf && senderId !== msgListLastUserId;
+    const showName = !isPrivateChat && !isSelf && senderId !== msgListLastUserId;
     msgListLastUserId = isSelf ? uid : senderId;
 
     html += '<div class="msg' + (isSelf ? ' self' : '') + '">';
@@ -1216,8 +1318,9 @@ function renderSidebar() {
   let pvHtml = '';
   for (const pc of S.privateChats) {
     const active = S.activeChat && S.activeChat.type === 'private' && S.activeChat.id === pc.id;
+    const dn = pc.other_display_name || pc.other_username;
     pvHtml += '<li class="' + (active ? 'active' : '') + '" onclick="selectPrivate(' + pc.id + ')">' +
-      '💬 ' + esc(pc.other_username) +
+      '💬 ' + esc(dn) + (pc.dnd ? ' 🔕' : '') +
       (!active && pc.unread_count > 0 ? '<span class="unread">' + pc.unread_count + '</span>' : '') +
       '</li>';
   }
@@ -1746,6 +1849,7 @@ document.getElementById('createChannelConfirm').onclick = async () => {
 document.getElementById('searchCancel').onclick = hideSearchUser;
 document.getElementById('inviteCancel').onclick = hideInviteMember;
 document.getElementById('manageCancel').onclick = hideChannelManage;
+document.getElementById('contactCancel').onclick = hideContactManage;
 document.getElementById('inviteUserInput').oninput = async function() {
   const q = this.value.trim();
   const resultsEl = document.getElementById('inviteResults');

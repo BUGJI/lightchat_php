@@ -176,6 +176,21 @@ notification_mode VARCHAR(20) DEFAULT 'none',
             )
         ");
         
+        // 创建私聊联系人元数据表（备注/免打扰/删除好友，按会话+用户维度）
+        $this->driver->execute("
+            CREATE TABLE IF NOT EXISTS private_contact_meta (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                chat_id INTEGER NOT NULL,
+                user_id INTEGER NOT NULL,
+                nickname TEXT,
+                dnd TINYINT DEFAULT 0,
+                hidden TINYINT DEFAULT 0,
+                hidden_at TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(chat_id, user_id)
+            )
+        ");
+        
         // 创建上传文件表
         $this->driver->execute("
             CREATE TABLE IF NOT EXISTS uploads (

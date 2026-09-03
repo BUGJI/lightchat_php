@@ -84,8 +84,10 @@ button:disabled{opacity:.4}
   padding:0 10px;margin-left:-10px;border-radius:12px;
 }
 #topBar a:active{background:rgba(255,255,255,.08)}
-#topBar div{flex:1;text-align:center;font-size:18px;font-weight:700;color:var(--txt);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding:0 4px;margin-right:44px}
+#topBar div{flex:1;text-align:center;font-size:18px;font-weight:700;color:var(--txt);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding:0 4px}
 #joinBtn{width:auto;min-width:72px;min-height:36px;font-size:14px;padding:6px 14px;border-radius:18px;background:var(--accent);color:#fff;margin-right:4px}
+#mgBtn{width:44px;min-width:44px;height:44px;min-height:44px;font-size:20px;padding:0;border-radius:50%;background:transparent;color:var(--accent);border:none;margin-right:4px}
+#mgBtn:active{background:rgba(255,255,255,.08)}
 #box{overflow-y:auto;padding:14px 10px 64px}
 .message-group{display:flex;flex-direction:column;margin-bottom:3px}
 .message-sender-name{font-size:13px;color:var(--txt2);margin:6px 18px 1px}
@@ -112,6 +114,28 @@ button:disabled{opacity:.4}
 #sendBtn:disabled{background:var(--card2);color:var(--txt3)}
 #imgViewer{display:none;position:fixed;inset:0;background:rgba(0,0,0,.96);z-index:9999;cursor:pointer}
 #imgViewerImg{max-width:92%;max-height:92%;position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);border-radius:16px}
+/* 管理底部抽屉 */
+#manageSheet{position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:800;display:none;align-items:flex-end;justify-content:center}
+#manageSheet.open{display:flex}
+#managePanel{width:100%;max-width:430px;max-height:88%;overflow-y:auto;background:rgba(24,24,27,.98);backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);border-radius:22px 22px 0 0;padding:16px 14px calc(20px + env(safe-area-inset-bottom));box-sizing:border-box}
+#managePanel h3{margin:2px 0 4px;font-size:19px;color:var(--txt)}
+#managePanel .mg-meta{font-size:13px;color:var(--txt2);margin-bottom:12px}
+#managePanel label{display:block;font-size:13px;color:var(--txt2);margin:12px 2px 4px}
+#managePanel input[type=text]{width:100%;box-sizing:border-box;padding:10px 12px;border-radius:12px;background:var(--card);color:var(--txt);border:1px solid var(--sep);font-size:16px;margin:0}
+#managePanel input[type=text]:disabled{opacity:.5;background:var(--card2)}
+#managePanel .lock-tip{font-size:12px;color:var(--txt3);margin-top:5px}
+#managePanel select{width:100%;box-sizing:border-box;padding:9px 10px;border-radius:12px;background:var(--card);color:var(--txt);border:1px solid var(--sep);font-size:15px}
+#managePanel .rowline{display:flex;align-items:center;gap:8px;padding:9px 2px;border-bottom:1px solid var(--sep);font-size:15px;color:var(--txt)}
+#managePanel .rowline .grow{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mg-btn{display:block;width:100%;margin-top:14px;padding:12px;border-radius:14px;border:none;font-size:16px;font-weight:600;background:var(--accent);color:#fff}
+.mg-btn.danger{background:rgba(255,69,58,.16);color:#ff453a}
+.mg-btn.ghost{background:var(--card);color:var(--txt)}
+.switch{position:relative;width:48px;height:30px;flex:none}
+.switch input{opacity:0;width:0;height:0}
+.switch .sl{position:absolute;inset:0;background:var(--card2);border-radius:30px;transition:.2s;cursor:pointer}
+.switch .sl:before{content:"";position:absolute;width:24px;height:24px;left:3px;top:3px;border-radius:50%;background:#fff;transition:.2s}
+.switch input:checked + .sl{background:var(--accent)}
+.switch input:checked + .sl:before{transform:translateX(18px)}
 #toast{
   position:fixed;left:50%;bottom:calc(80px + env(safe-area-inset-bottom));transform:translateX(-50%) translateY(8px);
   background:rgba(40,40,44,.92);color:#fff;font-size:14px;padding:10px 18px;border-radius:20px;
@@ -242,6 +266,7 @@ select{background-image:none;padding-right:10px}
       <a onclick="goBack()">←</a>
       <div id="chatboxTitle">聊天</div>
       <button id="joinBtn" onclick="joinCurrentChannel()" style="display:none">加入</button>
+      <button id="mgBtn" onclick="showChatManage()" style="display:none" aria-label="管理">⚙️</button>
     </div>
     <div id="box"></div>
     <div id="inputBar">
@@ -249,6 +274,11 @@ select{background-image:none;padding-right:10px}
       <button id="sendBtn" onclick="sendMsg()">➤</button>
     </div>
   </div>
+</div>
+
+<!-- ═══ 会话管理（频道管理 / 联系人管理）═══ -->
+<div id="manageSheet" onclick="if(event.target===this)closeManage()">
+  <div id="managePanel"></div>
 </div>
 
 <!-- ═══ 图片查看器 ═══ -->
@@ -449,10 +479,11 @@ function renderChatList() {
     let inner = '';
     for (const pc of S.privateChats) {
       const unread = pc.unread_count || 0;
+      const dn = pc.other_display_name || pc.other_username;
       const lastTxt = pc.last_message || (unread === 0 && pc.last_message_at ? '' : '');
-      inner += '<div class="userlist" onclick="openPrivate(' + pc.id + ',' + pc.other_user_id + ',\'' + js(pc.other_username) + '\')">' +
-        '<div class="head" style="background:' + avatarColor(pc.other_username) + '">' + avatarHTML(pc.other_user_id, pc.other_username) + '</div>' +
-        '<div class="user-pre"><div class="name">' + esc(pc.other_username) + '</div>' +
+      inner += '<div class="userlist" onclick="openPrivate(' + pc.id + ',' + pc.other_user_id + ',\'' + js(dn) + '\')">' +
+        '<div class="head" style="background:' + avatarColor(dn) + '">' + avatarHTML(pc.other_user_id, dn) + '</div>' +
+        '<div class="user-pre"><div class="name">' + esc(dn) + (pc.dnd ? ' <span style="font-size:12px">🔕</span>' : '') + '</div>' +
         '<div class="message-pre">' + (lastTxt ? esc(lastTxt) : (unread === 0 ? '暂无消息' : '')) + '</div></div>' +
         (unread > 0 ? '<div class="read-pre unread">' + (unread > 99 ? '99+' : unread) + '</div>' : '<div class="read-pre read">' + fmtListTime(pc.last_message_at) + '</div>') +
         '</div>';
@@ -538,6 +569,19 @@ function avatarHTML(uid, name) {
   return '<span style="color:#fff;font-weight:700;font-size:19px">' + esc(ch) + '</span>';
 }
 // ── 打开对话 ──
+function syncChatMgBtn() {
+  const mg = document.getElementById('mgBtn');
+  if (!mg || !S.activeChat) { if (mg) mg.style.display = 'none'; return; }
+  let show = false;
+  if (S.activeChat.type === 'private') {
+    show = true;
+  } else if (S.activeChat.joined) {
+    const ch = S.channels.find(c => c.id === S.activeChat.id);
+    show = ch ? !(ch.type === 'announcement' || (ch.name && ['general', 'announcements', 'help'].indexOf(ch.name) !== -1)) : false;
+  }
+  mg.style.display = show ? '' : 'none';
+}
+
 async function openChannel(id) {
   const ch = S.channels.find(c => c.id === id);
   if (!ch) return;
@@ -549,6 +593,7 @@ async function openChannel(id) {
     api('/channels/read.php', { method: 'POST', body: JSON.stringify({ channel_id: id }) }).catch(() => {});
   }
   showPage('chatbox');
+  syncChatMgBtn();
   await loadHistory();
 }
 
@@ -558,6 +603,7 @@ async function openPrivate(chatId, otherUserId, otherName) {
   if (pc) pc.unread_count = 0;
   document.getElementById('chatboxTitle').textContent = otherName;
   showPage('chatbox');
+  syncChatMgBtn();
   await loadHistory();
 }
 
@@ -618,7 +664,9 @@ function buildMessageHTML(m, uid) {
   }
   if (ts) S.lastMsgTime = ts;
   const key = senderKeyOf(m);
-  const showName = !self && key !== S.lastMsgUserId;
+  // 私聊顶部标题已显示对方名字，消息上方不再重复显示 sender；频道仍需区分发言者
+  const isPrivate = S.activeChat && S.activeChat.type === 'private';
+  const showName = !isPrivate && !self && key !== S.lastMsgUserId;
   S.lastMsgUserId = key;
   if (showName) {
     html += '<div class="message-sender-name">' + esc(m.username || ('用户' + key)) + '</div>';
@@ -720,6 +768,196 @@ async function sendMsg() {
   }
 }
 
+// ── 会话管理（⚙️：频道管理 / 联系人管理）──
+function openManage() { document.getElementById('manageSheet').classList.add('open'); }
+function closeManage() { document.getElementById('manageSheet').classList.remove('open'); }
+async function showChatManage() {
+  if (!S.activeChat) return;
+  if (S.activeChat.type === 'channel') await renderChannelManage(S.activeChat.id);
+  else await renderContactManage(S.activeChat.id);
+  openManage();
+}
+
+/* ═══════ 频道管理（身份识别：owner 可编辑，member 名称锁死）═══════ */
+async function renderChannelManage(id) {
+  const ch = S.channels.find(c => c.id === id);
+  const panel = document.getElementById('managePanel');
+  if (!ch) { closeManage(); return; }
+  const isOwner = S.user && ch.owner_id === S.user.id;
+  const isPrivate = ch.type === 'private';
+  const typeTxt = ch.type === 'private' ? '私密' : (ch.type === 'announcement' ? '公告' : '公开');
+  let html = '<h3>⚙️ 频道管理</h3>' +
+    '<div class="mg-meta">' + typeTxt + '频道 · ' + ch.member_count + ' 人' + (isOwner ? ' · 你是创建者' : ' · 你是成员') + '</div>';
+  // 频道名称：owner 可编辑，member 只读锁死
+  html += '<label>频道名称</label>' +
+    '<input type="text" id="mgName" maxlength="50" value="' + esc(ch.display_name || '') + '"' + (isOwner ? '' : ' disabled') + '>' +
+    (isOwner ? '' : '<div class="lock-tip">🔒 仅创建者可修改频道名称与权限</div>');
+  if (isOwner) {
+    html += '<label>频道权限</label><select id="mgType">' +
+      '<option value="public"' + (ch.type === 'public' ? ' selected' : '') + '>公开 — 所有人可见可加入</option>' +
+      '<option value="private"' + (ch.type === 'private' ? ' selected' : '') + '>私密 — 仅成员可见，需邀请</option></select>' +
+      '<label>描述</label><input type="text" id="mgDesc" maxlength="200" placeholder="频道简介（可选）" value="' + esc(ch.description || '') + '">' +
+      '<button class="mg-btn" onclick="saveChannelManage()">💾 保存设置</button>';
+  }
+  if (isPrivate) {
+    html += '<label>邀请成员（输入对方用户名）</label><div class="rowline" style="border:none;padding:0">' +
+      '<input type="text" id="mgInviteUser" placeholder="用户名" style="flex:1"><button class="mg-btn ghost" style="width:auto;margin:0;padding:9px 16px" onclick="inviteChannelMember()">邀请</button></div>';
+  }
+  panel.innerHTML = html;
+  // 成员名单（异步加载）
+  html += '<div style="margin-top:14px"><div style="font-size:13px;color:var(--txt2);margin-bottom:6px">成员名单</div><div id="mgMembers" style="border-top:1px solid var(--sep)">加载中…</div></div>';
+  panel.innerHTML = html;
+  // 底部动作：owner=解散 / member=退出（退出统一放在管理里）
+  html = panel.innerHTML + (isOwner
+    ? '<button class="mg-btn danger" onclick="deleteChannelManage()">🗑️ 解散频道</button>'
+    : '<button class="mg-btn danger" onclick="leaveChannelManage()">🚪 退出频道</button>');
+  panel.innerHTML = html;
+  // 拉成员
+  try {
+    const res = await api('/channels/members.php?channel_id=' + id);
+    const members = res.members || [];
+    const me = S.user ? S.user.id : 0;
+    document.getElementById('mgMembers').innerHTML = members.map(mb => {
+      const nm = mb.nickname || mb.username;
+      return '<div class="rowline"><div class="head" style="width:26px;height:26px;font-size:12px;background:' + avatarColor(nm) + '">' + esc(nm.charAt(0).toUpperCase()) + '</div>' +
+        '<div class="grow">' + esc(nm) + (mb.user_id === me ? '（你）' : '') + '</div>' +
+        (mb.role === 'owner' ? '<span style="font-size:11px;color:#fff;background:var(--accent);border-radius:4px;padding:2px 7px">创建者</span>' : '') + '</div>';
+    }).join('') || '<div class="rowline">暂无成员</div>';
+  } catch (e) {
+    const box = document.getElementById('mgMembers');
+    if (box) box.innerHTML = '<div class="rowline" style="color:#ff453a">成员加载失败</div>';
+  }
+}
+
+async function saveChannelManage() {
+  if (!S.activeChat || S.activeChat.type !== 'channel') return;
+  const ch = S.channels.find(c => c.id === S.activeChat.id);
+  if (!ch || !S.user || ch.owner_id !== S.user.id) return;
+  const display_name = document.getElementById('mgName').value.trim();
+  const type = document.getElementById('mgType').value;
+  const description = document.getElementById('mgDesc').value.trim();
+  if (!display_name) { toast('频道名称不能为空', true); return; }
+  try {
+    await api('/channels/update.php', { method: 'POST', body: JSON.stringify({ channel_id: ch.id, display_name, type, description }) });
+    ch.display_name = display_name; ch.type = type; ch.description = description;
+    S.activeChat.name = display_name;
+    document.getElementById('chatboxTitle').textContent = '# ' + display_name;
+    toast('已保存');
+    renderChannelManage(ch.id);
+  } catch (e) { toast('保存失败: ' + e.message, true); }
+}
+
+async function inviteChannelMember() {
+  if (!S.activeChat || S.activeChat.type !== 'channel') return;
+  const name = document.getElementById('mgInviteUser').value.trim();
+  if (!name) return;
+  try {
+    await api('/channels/invite.php', { method: 'POST', body: JSON.stringify({ channel_id: S.activeChat.id, username: name }) });
+    document.getElementById('mgInviteUser').value = '';
+    toast('已邀请 ' + name);
+    renderChannelManage(S.activeChat.id);
+  } catch (e) { toast('邀请失败: ' + e.message, true); }
+}
+
+async function leaveChannelManage() {
+  if (!S.activeChat || S.activeChat.type !== 'channel') return;
+  const ch = S.channels.find(c => c.id === S.activeChat.id);
+  const tip = ch && ch.type === 'private' ? '退出后需成员重新邀请才能进入，确定退出？' : '确定退出该频道？';
+  if (!confirm(tip)) return;
+  try {
+    await api('/channels/leave.php', { method: 'POST', body: JSON.stringify({ channel_id: S.activeChat.id }) });
+    S.joinedIds.delete(S.activeChat.id);
+    S.channels = S.channels.filter(c => c.id !== S.activeChat.id) ;
+    S.activeChat = null;
+    closeManage();
+    showPage('chat');
+    window.scrollTo(0, 0);
+    await initApp();
+    startPolling('list');
+    toast('已退出频道');
+  } catch (e) { toast('退出失败: ' + e.message, true); }
+}
+
+async function deleteChannelManage() {
+  if (!S.activeChat || S.activeChat.type !== 'channel') return;
+  const ch = S.channels.find(c => c.id === S.activeChat.id);
+  if (!ch || !S.user || ch.owner_id !== S.user.id) return;
+  if (!confirm('解散频道将删除所有消息与成员记录，且不可恢复。确定解散？')) return;
+  try {
+    await api('/channels/delete.php', { method: 'POST', body: JSON.stringify({ channel_id: ch.id }) });
+    S.channels = S.channels.filter(c => c.id !== ch.id);
+    S.joinedIds.delete(ch.id);
+    S.activeChat = null;
+    closeManage();
+    showPage('chat');
+    window.scrollTo(0, 0);
+    await initApp();
+    startPolling('list');
+    toast('频道已解散');
+  } catch (e) { toast('解散失败: ' + e.message, true); }
+}
+
+/* ═══════ 联系人管理（私聊对象：备注 / 免打扰 / 删除好友）═══════ */
+async function renderContactManage(chatId) {
+  const panel = document.getElementById('managePanel');
+  const pc = S.privateChats.find(c => c.id === chatId);
+  const baseName = (pc && pc.other_display_name) || (pc && pc.other_username) || S.activeChat.name || '对方';
+  let meta = { nickname: '', dnd: 0 };
+  try {
+    const r = await api('/private/contact.php?chat_id=' + chatId);
+    if (r && typeof r.nickname !== 'undefined') meta = r;
+  } catch (e) { /* 读取失败按默认 */ }
+  const realName = (pc && pc.other_username) || baseName;
+  panel.innerHTML =
+    '<h3>💬 联系人设置</h3>' +
+    '<div class="mg-meta">私聊对象：' + esc(realName) + '</div>' +
+    '<label>备注（仅自己可见，留空取消）</label>' +
+    '<input type="text" id="ctNickname" maxlength="30" placeholder="给 ' + esc(realName) + ' 起个备注名" value="' + esc(meta.nickname || '') + '">' +
+    '<div class="rowline" style="margin-top:14px"><div class="grow">免打扰 <span style="color:var(--txt3);font-size:12px">新消息不震动提醒（红点仍显示）</span></div>' +
+    '<label class="switch"><input type="checkbox" id="ctDnd"' + (meta.dnd ? ' checked' : '') + '><span class="sl"></span></label></div>' +
+    '<button class="mg-btn" onclick="saveContactManage()">💾 保存</button>' +
+    '<button class="mg-btn danger" onclick="deleteContactManage()">🗑️ 删除好友</button>' +
+    '<div style="font-size:12px;color:var(--txt3);margin-top:10px;line-height:1.5">删除后会话从列表移除；对方再发消息时会自动重新出现。聊天记录保留。</div>';
+}
+
+async function saveContactManage() {
+  if (!S.activeChat || S.activeChat.type !== 'private') return;
+  const chatId = S.activeChat.id;
+  const nickname = document.getElementById('ctNickname').value.trim();
+  const dnd = document.getElementById('ctDnd').checked ? 1 : 0;
+  try {
+    await api('/private/contact.php', { method: 'POST', body: JSON.stringify({ chat_id: chatId, action: 'update', nickname, dnd }) });
+    const pc = S.privateChats.find(c => c.id === chatId);
+    if (pc) {
+      pc.other_nickname = nickname;
+      pc.other_display_name = nickname || pc.other_username;
+      pc.dnd = dnd;
+    }
+    S.activeChat.name = nickname || (pc && pc.other_username) || S.activeChat.name;
+    document.getElementById('chatboxTitle').textContent = S.activeChat.name;
+    renderChatList();
+    toast('已保存');
+    closeManage();
+  } catch (e) { toast('保存失败: ' + e.message, true); }
+}
+
+async function deleteContactManage() {
+  if (!S.activeChat || S.activeChat.type !== 'private') return;
+  if (!confirm('删除后该会话从你的列表移除（聊天记录保留），确定删除？')) return;
+  const chatId = S.activeChat.id;
+  try {
+    await api('/private/contact.php', { method: 'POST', body: JSON.stringify({ chat_id: chatId, action: 'delete' }) });
+    S.privateChats = S.privateChats.filter(c => c.id !== chatId);
+    S.activeChat = null;
+    closeManage();
+    showPage('chat');
+    window.scrollTo(0, 0);
+    renderChatList();
+    startPolling('list');
+    toast('已删除好友');
+  } catch (e) { toast('删除失败: ' + e.message, true); }
+}
+
 // ── 加入当前频道 ──
 async function joinCurrentChannel() {
   if (!S.activeChat || S.activeChat.type !== 'channel') return;
@@ -731,6 +969,7 @@ async function joinCurrentChannel() {
     if (ch) { ch.is_joined = true; ch.unread_count = 0; }
     document.getElementById('inputBar').style.display = 'flex';
     document.getElementById('joinBtn').style.display = 'none';
+    syncChatMgBtn();
     await loadHistory();
     toast('已加入频道');
   } catch (e) { toast('加入失败: ' + e.message, true); }
@@ -814,9 +1053,10 @@ async function pollList() {
     const nextPv = pvData.chats || [];
     const prev = S.unreadSnap;
     const next = {};
-    let increased = false;
-    nextCh.forEach(ch => { if (ch.is_joined) { next['c' + ch.id] = ch.unread_count || 0; if ((prev['c' + ch.id] || 0) < (ch.unread_count || 0)) increased = true; } });
-    nextPv.forEach(pc => { next['p' + pc.id] = pc.unread_count || 0; if ((prev['p' + pc.id] || 0) < (pc.unread_count || 0)) increased = true; });
+    let growth = false;       // 任意会话未读增长 → 需要重绘列表/红点
+    let vibrateWorthy = false; // 增长来自非免打扰会话 → 才震动提醒
+    nextCh.forEach(ch => { if (ch.is_joined) { const n = ch.unread_count || 0; next['c' + ch.id] = n; if ((prev['c' + ch.id] || 0) < n) { growth = true; vibrateWorthy = true; } } });
+    nextPv.forEach(pc => { const n = pc.unread_count || 0; next['p' + pc.id] = n; if ((prev['p' + pc.id] || 0) < n) { growth = true; if (!pc.dnd) vibrateWorthy = true; } });
     S.channels = nextCh;
     S.privateChats = nextPv;
     S.joinedIds = new Set(nextCh.filter(c => c.is_joined).map(c => c.id));
@@ -825,7 +1065,7 @@ async function pollList() {
       const winTop = window.scrollY;
       renderChatList();
       window.scrollTo(0, winTop);
-      if (increased) vibrate();
+      if (vibrateWorthy) vibrate();
     }
     S.unreadSnap = next;
   } catch (e) {
@@ -854,6 +1094,9 @@ async function goBack() {
   _navBusy = true;
   try {
     S.activeChat = null;
+    const mg = document.getElementById('mgBtn');
+    if (mg) mg.style.display = 'none';
+    closeManage();
     showPage('chat');
     window.scrollTo(0, 0); // 回列表从顶部看
     await initApp(); // 刷新列表（未读数以服务端为准）

@@ -41,6 +41,13 @@ $u2 = max($user['id'], $toUserId);
 $chat = $db->get('private_chats', ['user1_id' => $u1, 'user2_id' => $u2]);
 
 if ($chat) {
+    // 重新发起私聊 = 主动恢复联系：清除本端的“删除好友”隐藏标记（备注/免打扰保留）
+    $me = (int)$user['id'];
+    $myMeta = $db->get('private_contact_meta', ['chat_id' => (int)$chat['id'], 'user_id' => $me]);
+    if ($myMeta && (int)($myMeta['hidden'] ?? 0) === 1) {
+        $db->update('private_contact_meta', ['hidden' => 0, 'hidden_at' => null, 'updated_at' => date('Y-m-d H:i:s')],
+            ['chat_id' => (int)$chat['id'], 'user_id' => $me]);
+    }
     json_success(['chat_id' => (int)$chat['id'], 'created' => false]);
 }
 
