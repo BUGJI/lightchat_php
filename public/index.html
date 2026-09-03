@@ -95,10 +95,14 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC'
 .msg.self { align-self:flex-end; flex-direction:row-reverse; }
 .msg .avatar { width:36px; height:36px; border-radius:50%; background:var(--primary); color:#fff; display:flex; align-items:center; justify-content:center; font-size:14px; font-weight:600; flex-shrink:0; }
 .msg .avatar img { width:100%; height:100%; border-radius:50%; object-fit:cover; }
+.msg-body { display:flex; flex-direction:column; align-items:flex-start; min-width:0; max-width:100%; }
+.msg.self .msg-body { align-items:flex-end; }
 .msg .bubble { background:var(--msg-bg); padding:10px 14px; border-radius:12px; box-shadow:0 1px 3px rgba(0,0,0,.06); font-size:14px; line-height:1.5; word-break:break-word; }
 .msg.self .bubble { background:var(--msg-self); }
-.msg .sender { font-size:12px; color:var(--primary-dark); font-weight:600; margin-bottom:2px; }
-.msg .time { font-size:11px; color:var(--text-light); margin-top:2px; }
+.msg .sender { font-size:12px; color:var(--primary-dark); font-weight:600; margin:0 2px 2px; }
+.time-sep { text-align:center; color:var(--text-light); font-size:12px; margin:12px auto 4px; width:100%; flex:none; }
+/* 单图片消息：无边框，不套 bubble */
+.msg-img { max-width:240px; max-height:240px; border-radius:12px; cursor:pointer; display:block; background:transparent; }
 .msg.system { align-self:center; max-width:100%; }
 .msg.system .bubble { background:rgba(0,0,0,.04); color:var(--text-light); font-size:12px; padding:6px 12px; }
 .msg .file-attach { margin-top:4px; }
@@ -426,6 +430,41 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC'
   </div>
 </div>
 
+<!-- ═══════════ Channel Manage Modal ═══════════ -->
+<div class="modal-overlay" id="manageModal" style="display:none">
+  <div class="modal" style="max-width:420px">
+    <h3>⚙️ 频道管理 <span id="mgChannelLabel" style="font-size:13px;color:var(--text-light)"></span></h3>
+    <div id="mgMeta" style="font-size:13px;color:var(--text-light);margin-bottom:10px"></div>
+    <!-- owner 专属设置区 -->
+    <div id="mgOwnerArea" style="display:none">
+      <div class="form-group">
+        <label>频道名称</label>
+        <input type="text" id="mgDisplayName" maxlength="50" placeholder="频道显示名称">
+      </div>
+      <div class="form-group">
+        <label>频道权限</label>
+        <select id="mgType">
+          <option value="public">公开频道 — 所有人可见，可直接加入</option>
+          <option value="private">私密频道 — 仅成员可见，需邀请加入</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>描述</label>
+        <input type="text" id="mgDesc" maxlength="200" placeholder="频道简介（可选）">
+      </div>
+      <button class="join-btn" style="width:100%;margin-bottom:12px" onclick="saveChannelSettings()">💾 保存设置</button>
+      <div class="error" id="mgError"></div>
+    </div>
+    <!-- 成员列表 -->
+    <div style="font-size:13px;font-weight:600;color:var(--text);margin:6px 0 4px">成员列表 <span id="mgMemberCount"></span></div>
+    <div id="mgMembers" style="max-height:200px;overflow-y:auto;border-top:1px solid var(--border);padding-top:6px"></div>
+    <div class="btn-row" style="justify-content:space-between;margin-top:14px">
+      <button class="leave-btn" id="mgActionBtn" style="display:none"></button>
+      <button class="btn-cancel" id="manageCancel">关闭</button>
+    </div>
+  </div>
+</div>
+
 <!-- ═══ 图片查看器 ═══ -->
 <div id="imgViewer" onclick="hideImg()"><img id="imgViewerImg" src="" alt=""></div>
 
@@ -549,6 +588,103 @@ async function joinChannel(id) {
   selectChannel(id);
 }
 
+var manageChannelId = 0;   // 当前管理弹层作用的频道 ID
+
+function hideChannelManage() {
+  document.getElementById('manageModal').style.display = 'none';
+  document.getElementById('mgError').textContent = '';
+}
+
+async function showChannelManage(channelId) {
+  manageChannelId = channelId;
+  const ch = S.channels.find(c => c.id === channelId);
+  if (!ch) return;
+  document.getElementById('mgChannelLabel').textContent = '# ' + ch.display_name;
+  document.getElementById('mgError').textContent = '';
+  const uid = S.user ? S.user.id : 0;
+  const isOwner = ch.owner_id === uid;
+  const typeTxt = ch.type === 'private' ? '私密' : '公开';
+  document.getElementById('mgMeta').textContent =
+    typeTxt + '频道 · ' + ch.member_count + ' 人' + (isOwner ? ' · 你是创建者' : ' · 你是成员');
+
+  // owner 专属设置区
+  const ownerArea = document.getElementById('mgOwnerArea');
+  ownerArea.style.display = isOwner ? '' : 'none';
+  if (isOwner) {
+    document.getElementById('mgDisplayName').value = ch.display_name || '';
+    document.getElementById('mgType').value = ch.type || 'public';
+    document.getElementById('mgDesc').value = ch.description || '';
+  }
+
+  // 底部动作按钮
+  const actionBtn = document.getElementById('mgActionBtn');
+  actionBtn.style.display = '';
+  actionBtn.textContent = isOwner ? '🗑️ 解散频道' : '🚪 退出频道';
+  actionBtn.onclick = isOwner
+    ? function(){ dissolveChannel(channelId); }
+    : function(){ hideChannelManage(); leaveChannel(channelId); };
+
+  document.getElementById('manageModal').style.display = '';
+
+  // 拉取成员名单
+  const box = document.getElementById('mgMembers');
+  const cnt = document.getElementById('mgMemberCount');
+  box.innerHTML = '<div style="color:var(--text-light);font-size:13px;padding:6px 0">加载中...</div>';
+  cnt.textContent = '';
+  try {
+    const res = await post('/api/channels/members.php', { channel_id: channelId });
+    const members = res.members || [];
+    cnt.textContent = '(' + members.length + ' 人)';
+    let html = '';
+    for (const mb of members) {
+      const nm = mb.nickname || mb.username;
+      html += '<div style="display:flex;align-items:center;gap:8px;padding:6px 0">' +
+        '<div class="avatar" style="width:26px;height:26px;font-size:12px">' + esc(nm.charAt(0).toUpperCase()) + '</div>' +
+        '<div style="flex:1;min-width:0"><div style="font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(nm) + '</div></div>' +
+        (mb.role === 'owner'
+          ? '<span style="font-size:11px;color:#fff;background:var(--primary);border-radius:4px;padding:1px 6px">创建者</span>'
+          : '') +
+        (mb.user_id === uid ? '<span style="font-size:11px;color:var(--text-light)">你</span>' : '') +
+        '</div>';
+    }
+    box.innerHTML = html || '<div style="color:var(--text-light);font-size:13px;padding:6px 0">暂无成员</div>';
+  } catch(e) {
+    box.innerHTML = '<div style="color:#e74c3c;font-size:13px;padding:6px 0">加载失败: ' + esc(e.message || '') + '</div>';
+  }
+}
+
+async function saveChannelSettings() {
+  if (!manageChannelId) return;
+  const display_name = document.getElementById('mgDisplayName').value.trim();
+  const type = document.getElementById('mgType').value;
+  const description = document.getElementById('mgDesc').value.trim();
+  const err = document.getElementById('mgError');
+  err.textContent = '';
+  if (!display_name) { err.textContent = '频道名称不能为空'; return; }
+  try {
+    await post('/api/channels/update.php', { channel_id: manageChannelId, display_name: display_name, type: type, description: description });
+    await loadChannels();
+    renderMain();
+    // 刷新弹层中的 meta/入口
+    showChannelManage(manageChannelId);
+  } catch(e) {
+    err.textContent = e.message || '保存失败';
+  }
+}
+
+async function dissolveChannel(channelId) {
+  const ch = S.channels.find(c => c.id === channelId);
+  if (!ch) return;
+  if (!confirm('确定要解散频道「' + ch.display_name + '」吗？\n⚠️ 频道及其全部消息将被删除，不可恢复！')) return;
+  try {
+    await post('/api/channels/delete.php', { channel_id: channelId });
+    hideChannelManage();
+    if (S.activeChat && S.activeChat.type === 'channel' && S.activeChat.id === channelId) S.activeChat = null;
+    await loadChannels();
+    renderMain();
+  } catch(e) { alert(e.message); }
+}
+
 async function leaveChannel(id) {
   const ch = S.channels.find(c => c.id === id);
   if (!ch) return;
@@ -655,7 +791,7 @@ function appendLocalMessage(m) {
   const welcome = messageArea.querySelector('.welcome');
   if (isCurrent) {
     if (welcome) welcome.remove();
-    messageArea.insertAdjacentHTML('beforeend', renderMessageList([m]));
+    messageArea.insertAdjacentHTML('beforeend', renderMessageList([m], true));
     // 底部保持可见
     if (messageArea.scrollTop + messageArea.clientHeight >= messageArea.scrollHeight - 120) {
       scrollToBottom();
@@ -785,7 +921,7 @@ async function poll() {
             // 增量插入，不重绘整个列表
             const messageArea = document.getElementById('messageArea');
             if (messageArea.querySelector('.welcome')) messageArea.querySelector('.welcome').remove();
-            messageArea.insertAdjacentHTML('beforeend', renderMessageList(fresh));
+            messageArea.insertAdjacentHTML('beforeend', renderMessageList(fresh, true));
             if (messageArea.scrollTop + messageArea.clientHeight >= messageArea.scrollHeight - 120) {
               scrollToBottom();
             }
@@ -822,7 +958,7 @@ async function poll() {
           if (fresh.length > 0) {
             const messageArea = document.getElementById('messageArea');
             if (messageArea.querySelector('.welcome')) messageArea.querySelector('.welcome').remove();
-            messageArea.insertAdjacentHTML('beforeend', renderMessageList(fresh));
+            messageArea.insertAdjacentHTML('beforeend', renderMessageList(fresh, true));
             if (messageArea.scrollTop + messageArea.clientHeight >= messageArea.scrollHeight - 120) {
               scrollToBottom();
             }
@@ -946,9 +1082,11 @@ function renderMain() {
         headerActions.innerHTML = '';
       } else if (ch.type === 'private') {
         headerActions.innerHTML = '<button class="invite-btn" onclick="showInviteMember('+ch.id+')">👥 邀请成员</button>' +
+                                  '<button class="invite-btn" onclick="showChannelManage('+ch.id+')">⚙️ 管理</button>' +
                                   '<button class="leave-btn" onclick="leaveChannel('+ch.id+')">退出</button>';
       } else {
-        headerActions.innerHTML = '<button class="leave-btn" onclick="leaveChannel('+ch.id+')">退出</button>';
+        headerActions.innerHTML = '<button class="invite-btn" onclick="showChannelManage('+ch.id+')">⚙️ 管理</button>' +
+                                  '<button class="leave-btn" onclick="leaveChannel('+ch.id+')">退出</button>';
       }
     } else if (ch.type === 'private') {
       headerActions.innerHTML = '<span class="lock-hint">🔒 私密频道 · 需成员邀请</span>';
@@ -991,32 +1129,55 @@ function renderMessages() {
   scrollToBottom();
 }
 
-function renderMessageList(msgs) {
+// 消息渲染状态：与手表端一致——超过 3 分钟才插一条居中时间分隔；连续同发送者只在组首显示名字
+let msgListLastTs = 0;        // 上一条消息时间戳(ms)，0=首条不插时间
+let msgListLastUserId = null; // 上一条消息的发送者 id
+
+function renderMessageList(msgs, keepState) {
+  if (!keepState) { msgListLastTs = 0; msgListLastUserId = null; }
   let html = '';
   const uid = S.user ? S.user.id : 0;
   for (const m of msgs) {
     if (m.type === 'system') {
+      msgListLastUserId = null; // 系统消息打断连续分组，下一条普通消息重新显示发送者名
       html += '<div class="msg system"><div class="bubble">' + esc(m.content) + '</div></div>';
       continue;
     }
     const isSelf = m.user_id === uid || m.from_user_id === uid;
+    const ts = parseMsgTs(m.created_at);
+    if (ts && msgListLastTs > 0 && (ts - msgListLastTs) > 180000) {
+      html += '<div class="time-sep">' + formatWatchTime(ts) + '</div>';
+    }
+    if (ts) msgListLastTs = ts;
+    const senderId = m.user_id || m.from_user_id || 0;
+    const showName = !isSelf && senderId !== msgListLastUserId;
+    msgListLastUserId = isSelf ? uid : senderId;
+
     html += '<div class="msg' + (isSelf ? ' self' : '') + '">';
     html += '<div class="avatar">' + (m.avatar ? '<img src="' + esc(m.avatar) + '" alt="">' : (m.username || '?').charAt(0).toUpperCase()) + '</div>';
-    html += '<div class="bubble">';
-    if (!isSelf && m.username) html += '<div class="sender">' + esc(m.username) + '</div>';
-    html += '<div>' + esc(m.content || '') + '</div>';
-    // 文件
-    if (m.file_url) {
-      html += '<div class="file-attach">';
-      const fullUrl = safeFileUrl(m.file_url);
-      if (m.file_url.match(/\.(jpg|jpeg|png|gif|webp)$/i)) {
-        html += '<img src="' + esc(fullUrl) + '" alt="" loading="lazy" onclick="event.stopPropagation();showImg(this.src)">';
-      } else {
-        html += '<a href="' + esc(fullUrl) + '" target="_blank" rel="noopener noreferrer">📎 文件 (' + formatSize(m.file_size) + ')</a>';
+    html += '<div class="msg-body">';
+    // 发送者名字显示在 bubble 上方（不包裹在 bubble 内），连续同人只显示一次
+    if (showName && m.username) html += '<div class="sender">' + esc(m.username) + '</div>';
+    // 单图片消息（无文字且为图片类型）：无边框大图，不套 bubble
+    const imgOnly = m.type === 'image' && !(m.content || '').trim() && m.file_url;
+    if (imgOnly) {
+      html += '<img class="msg-img" src="' + esc(safeFileUrl(m.file_url)) + '" alt="" loading="lazy" onclick="event.stopPropagation();showImg(this.src)">';
+    } else {
+      html += '<div class="bubble">';
+      html += '<div>' + esc(m.content || '') + '</div>';
+      // 文件
+      if (m.file_url) {
+        html += '<div class="file-attach">';
+        const fullUrl = safeFileUrl(m.file_url);
+        if (m.file_url.match(/\.(jpg|jpeg|png|gif|webp)$/i)) {
+          html += '<img src="' + esc(fullUrl) + '" alt="" loading="lazy" onclick="event.stopPropagation();showImg(this.src)">';
+        } else {
+          html += '<a href="' + esc(fullUrl) + '" target="_blank" rel="noopener noreferrer">📎 文件 (' + formatSize(m.file_size) + ')</a>';
+        }
+        html += '</div>';
       }
       html += '</div>';
     }
-    html += '<div class="time">' + formatTime(m.created_at) + '</div>';
     html += '</div></div>';
   }
   return html;
@@ -1436,6 +1597,25 @@ function safeFileUrl(u) {
   return API_BASE + u;
 }
 function formatTime(t) { if (!t) return ''; const d = new Date(t.replace(' ', 'T') + '+08:00'); if (isNaN(d.getTime())) return t; return d.toLocaleString('zh-CN', { month:'short', day:'numeric', hour:'2-digit', minute:'2-digit' }); }
+/* 与手表端一致的时间处理：解析后端 "Y-m-d H:i:s"（+08:00）为毫秒时间戳 */
+function parseMsgTs(t) {
+  if (!t) return 0;
+  const ms = Date.parse(t.replace(' ', 'T') + '+08:00');
+  return isNaN(ms) ? 0 : ms;
+}
+/* 手表端 formatTimestamp 同款：今天/昨天/日期 + HH:MM */
+function formatWatchTime(ts) {
+  const d = new Date(ts), td = new Date();
+  const isToday = d.getFullYear() === td.getFullYear() && d.getMonth() === td.getMonth() && d.getDate() === td.getDate();
+  const yesterday = new Date(Date.now() - 86400000);
+  const isYesterday = d.getFullYear() === yesterday.getFullYear() && d.getMonth() === yesterday.getMonth() && d.getDate() === yesterday.getDate();
+  const p = n => String(n).padStart(2, '0');
+  const time = p(d.getHours()) + ':' + p(d.getMinutes());
+  if (isToday) return '今天 ' + time;
+  if (isYesterday) return '昨天 ' + time;
+  if (d.getFullYear() === td.getFullYear()) return p(d.getMonth() + 1) + '-' + p(d.getDate()) + ' ' + time;
+  return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) + ' ' + time;
+}
 /* 生成后端风格的时间串 Y-m-d H:i:s（本地时区），与 formatTime 解析兼容 */
 function localNowStr() {
   const d = new Date();
@@ -1486,6 +1666,7 @@ document.getElementById('createChannelConfirm').onclick = async () => {
 
 document.getElementById('searchCancel').onclick = hideSearchUser;
 document.getElementById('inviteCancel').onclick = hideInviteMember;
+document.getElementById('manageCancel').onclick = hideChannelManage;
 document.getElementById('inviteUserInput').oninput = async function() {
   const q = this.value.trim();
   const resultsEl = document.getElementById('inviteResults');
