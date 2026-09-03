@@ -186,9 +186,27 @@ select{background-image:none;padding-right:10px}
 
   <!-- ═══ 聊天列表 ═══ -->
   <div id="chat" class="page">
+    <div class="box-list">
+      <div class="userlist" onclick="showDiscover()" data-id="discover-entry">
+        <div class="head" style="background:var(--accent)">＋</div>
+        <div class="user-pre"><div class="name">添加好友 / 群组</div><div class="message-pre">搜索频道或用户</div></div>
+      </div>
+    </div>
     <div class="box-list" id="chat_list"></div>
     <div class="box-list">
       <div class="name" onclick="showPage('settings')" style="padding:12px;text-align:center;cursor:pointer">⚙️ 设置</div>
+    </div>
+  </div>
+
+  <!-- ═══ 添加好友 / 群组（发现）═══ -->
+  <div id="discover" class="page">
+    <div class="box-list">
+      <div class="userlist" onclick="goBack()" data-id="discover-back">
+        <div class="user-pre"><div class="name">← 返回聊天</div></div>
+      </div>
+      <div style="padding:14px 12px 2px;color:var(--txt2);font-size:14px">🔍 输入关键词可搜索群组与用户，留空显示可加入的公开频道</div>
+      <input id="discoverInput" placeholder="搜索频道或用户名" style="margin-top:8px" autocomplete="off">
+      <div id="discoverResults" style="padding-top:4px"></div>
     </div>
   </div>
 
@@ -372,15 +390,6 @@ async function initApp() {
       S.privateChats = pvData.chats || [];
     } catch (e) { S.privateChats = []; }
 
-    // 所有用户
-    try {
-      const userData = await api('/users/list.php');
-      S.users = userData.users || [];
-      S.users.forEach(u => {
-        S.userCache.set(u.id, { username: u.username, avatar: u.avatar, nickname: u.nickname });
-      });
-    } catch (e) { S.users = []; }
-
     renderChatList();
     S.unreadSnap = takeUnreadSnapshot(); // 刷新后静默基线，不误震
   } catch (e) { console.error('initApp error', e); }
@@ -403,7 +412,7 @@ function toggleSection(key) {
   if (title) title.classList.toggle('collapsed', v);
   if (body) body.classList.toggle('collapsed', v);
 }
-const SECTION_DEFAULTS = { channels: false, private: false, users: true }; // 所有用户默认折叠
+const SECTION_DEFAULTS = { channels: false, private: false }; // 频道/私聊默认展开（"所有用户"区已移除，见 renderChatList）
 function sectionHTML(key, label, bodyHtml) {
   const c = getCollapsed();
   const v = c[key] === undefined ? (SECTION_DEFAULTS[key] || false) : c[key];
@@ -415,20 +424,21 @@ function renderChatList() {
   const list = document.getElementById('chat_list');
   let html = '';
 
-  // 频道（未加入 → 蓝色 + 加入）
-  if (S.channels.length > 0) {
+  // 频道（只显示已加入；未加入的公开/私密频道统一走顶部"添加好友/群组"发现，
+  // 未加入私密对非成员完全不可见，与桌面端一致）
+  const joinedChans = S.channels.filter(ch => S.joinedIds.has(ch.id));
+  if (joinedChans.length > 0) {
     let inner = '';
-    for (const ch of S.channels) {
+    for (const ch of joinedChans) {
       const icon = ch.type === 'announcement' ? '📢' : '#';
-      const joined = S.joinedIds.has(ch.id);
-      const unread = joined ? (ch.unread_count || 0) : 0;
-      const badge = joined
-        ? (unread > 0 ? '<div class="read-pre unread">' + (unread > 99 ? '99+' : unread) + '</div>' : '<div class="read-pre read">' + ch.member_count + '人</div>')
-        : '<div class="read-pre read join">+</div>';
+      const unread = ch.unread_count || 0;
+      const badge = unread > 0
+        ? '<div class="read-pre unread">' + (unread > 99 ? '99+' : unread) + '</div>'
+        : '<div class="read-pre read">' + ch.member_count + '人</div>';
       inner += '<div class="userlist" onclick="openChannel(' + ch.id + ')">' +
         '<div class="head" style="background:' + avatarColor(ch.display_name) + '">' + icon + '</div>' +
         '<div class="user-pre"><div class="name">' + esc(ch.display_name) + '</div>' +
-        '<div class="message-pre">' + (joined ? '已加入' : '未加入') + (unread > 0 ? ' · <span style="color:#ff453a;font-weight:600">' + unread + ' 条新消息</span>' : '') + '</div></div>' +
+        '<div class="message-pre">' + (unread > 0 ? '<span style="color:#ff453a;font-weight:600">' + unread + ' 条新消息</span>' : '已加入') + '</div></div>' +
         badge + '</div>';
     }
     html += sectionHTML('channels', '频道', inner);
@@ -450,22 +460,77 @@ function renderChatList() {
     html += sectionHTML('private', '私聊', inner);
   }
 
-  // 所有用户（可发起新私聊）
-  if (S.users.length > 0) {
-    let inner = '';
-    for (const u of S.users) {
-      if (u.id === S.user.id) continue; // 跳过自己
-      inner += '<div class="userlist" onclick="startPrivate(' + u.id + ',\'' + js(u.username) + '\')">' +
+  if (!html) html = '<div style="padding:24px;text-align:center;color:var(--txt2);font-size:15px">还没有会话，点上方 ➕ 搜索频道或用户</div>';
+  list.innerHTML = html;
+}
+
+// ── 添加好友 / 群组（发现页：搜索频道+用户；私密频道非成员不出现）──
+function showDiscover() {
+  const inp = document.getElementById('discoverInput');
+  if (inp) { inp.value = ''; }
+  renderDiscoverRecommend();
+  showPage('discover');
+  if (inp) { try { inp.focus(); } catch (e) {} }
+}
+// 空查询推荐：可加入的公开频道
+function renderDiscoverRecommend() {
+  const box = document.getElementById('discoverResults');
+  if (!box) return;
+  const open = S.channels.filter(ch => ch.type === 'public' && !S.joinedIds.has(ch.id));
+  if (!open.length) {
+    box.innerHTML = '<div style="padding:12px 2px;font-size:13px;color:var(--txt2)">暂无推荐，输入关键词可搜索频道或用户</div>';
+    return;
+  }
+  box.innerHTML = '<div class="seg-label">可加入的公开频道 (' + open.length + ')</div>' + open.map(ch =>
+    '<div class="userlist" onclick="openChannel(' + ch.id + ')">' +
+    '<div class="head" style="background:' + avatarColor(ch.display_name) + '">' + (ch.type === 'announcement' ? '📢' : '#') + '</div>' +
+    '<div class="user-pre"><div class="name">' + esc(ch.display_name) + '</div>' +
+    '<div class="message-pre">公开频道 · ' + ch.member_count + ' 人 · 未加入</div></div>' +
+    '<div class="read-pre read join">+</div></div>'
+  ).join('');
+}
+async function discoverSearch(q) {
+  const box = document.getElementById('discoverResults');
+  if (!box) return;
+  const kw = q.toLowerCase();
+  // 群组：已加入的全部 + 公开频道（未加入私密不参与搜索）
+  const chans = S.channels.filter(ch =>
+    (S.joinedIds.has(ch.id) || ch.type === 'public') &&
+    ((ch.display_name || '').toLowerCase().indexOf(kw) !== -1 || (ch.name || '').toLowerCase().indexOf(kw) !== -1)
+  );
+  try {
+    const data = await api('/users/search.php?q=' + encodeURIComponent(q));
+    const users = (data.users || []).filter(u => u.id !== S.user.id);
+    let html = '';
+    if (chans.length) {
+      html += '<div class="seg-label">群组 (' + chans.length + ')</div>';
+      html += chans.map(ch => {
+        const joined = S.joinedIds.has(ch.id);
+        const meta = (ch.type === 'private' ? '🔒 私密' : ch.type === 'announcement' ? '📢 公告' : '# 公开') + ' · ' + ch.member_count + ' 人';
+        return '<div class="userlist" onclick="openChannel(' + ch.id + ')">' +
+          '<div class="head" style="background:' + avatarColor(ch.display_name) + '">' + (ch.type === 'private' ? '🔒' : ch.type === 'announcement' ? '📢' : '#') + '</div>' +
+          '<div class="user-pre"><div class="name">' + esc(ch.display_name) + '</div>' +
+          '<div class="message-pre">' + meta + ' · ' + (joined ? '已加入' : '未加入') + '</div></div>' +
+          (joined
+            ? (ch.unread_count > 0 ? '<div class="read-pre unread">' + Math.min(ch.unread_count, 99) + '</div>' : '<div class="read-pre read">' + ch.member_count + '人</div>')
+            : '<div class="read-pre read join">+</div>') +
+          '</div>';
+      }).join('');
+    }
+    if (users.length) {
+      html += '<div class="seg-label">用户 (' + users.length + ')</div>';
+      html += users.map(u =>
+        '<div class="userlist" onclick="startPrivate(' + u.id + ',\'' + js(u.username) + '\')">' +
         '<div class="head" style="background:' + avatarColor(u.nickname || u.username) + '">' + avatarHTML(u.id, u.username) + '</div>' +
         '<div class="user-pre"><div class="name">' + esc(u.nickname || u.username) + '</div>' +
         '<div class="message-pre">' + esc(u.role || '') + '</div></div>' +
-        '</div>';
+        '<div class="read-pre read join">→</div></div>'
+      ).join('');
     }
-    html += sectionHTML('users', '所有用户', inner);
+    box.innerHTML = html || '<div style="padding:12px 2px;font-size:13px;color:var(--txt2)">未找到匹配的群组或用户</div>';
+  } catch (e) {
+    box.innerHTML = '<div style="padding:12px 2px;font-size:13px;color:#f44">搜索失败，请稍后再试</div>';
   }
-
-  if (!html) html = '<div style="padding:24px;text-align:center;color:var(--txt2);font-size:15px">没有可用的会话，请先加入频道</div>';
-  list.innerHTML = html;
 }
 
 function avatarHTML(uid, name) {
@@ -830,6 +895,13 @@ document.addEventListener('DOMContentLoaded', () => {
   // 聊天页回车
   const msgInput = document.getElementById('msg');
   if (msgInput) msgInput.onkeydown = e => { if (e.key === 'Enter') sendMsg(); };
+  // 发现页搜索
+  const di = document.getElementById('discoverInput');
+  if (di) di.oninput = function() {
+    const q = this.value.trim();
+    if (!q) { renderDiscoverRecommend(); return; }
+    discoverSearch(q);
+  };
 });
 
 // ── 工具函数 ──
