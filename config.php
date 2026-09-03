@@ -54,6 +54,7 @@ return [
                     'user.message.delete' => true,     // 删除自己的消息
                     'channel.create' => true,          // 创建频道
                     'channel.manage' => true,          // 管理自己创建的频道
+                    'user.file.upload' => true,        // 上传文件/图片（普通用户默认允许）
                     'user.bot.register' => true,       // 自助注册 Bot
                 ],
                 'rate_limit' => 30,
