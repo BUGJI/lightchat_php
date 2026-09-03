@@ -6,6 +6,11 @@
 - **前端**：桌面版 SPA 与手表（穿戴）优化版，均为单 HTML 自包含
 - **部署**：内置网页安装向导（`install.php`），FTP 上传 → 访问向导 → 完成
 
+<img width="320" height="240" alt="QQ_1788421524824" src="https://github.com/user-attachments/assets/ac85f644-1feb-4b81-b057-bd5db8cf2100" />
+
+<img width="240" height="240" alt="image" src="https://github.com/user-attachments/assets/da5f14d1-2d7e-4456-b449-7ac6d5fcc5dc" align=right/>
+
+
 ## 特性
 
 | 类别 | 能力 |
