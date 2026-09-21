@@ -37,8 +37,9 @@ set_exception_handler(function ($e) {
         header('Content-Type: application/json; charset=utf-8');
     }
     echo json_encode([
-        'error'   => 'internal_error',
-        'message' => '服务器内部错误',
+        'success' => false,
+        'data'    => null,
+        'error'   => ['code' => 'internal_error', 'message' => '服务器内部错误'],
     ], JSON_UNESCAPED_UNICODE);
     exit;
 });
@@ -73,58 +74,96 @@ if (isset($config['app']['timezone'])) {
 header('Content-Type: application/json; charset=utf-8');
 
 // ── CORS ──
+// 通过 config.php / config.local.php 的 api.cors.allowed_origins 配置跨域来源：
+//   ['*']                                  放开所有来源
+//   ['https://a.com', 'https://b.com']     精确白名单
+//   ['https://*.example.com']              通配子域
+// 也兼容逗号/空格分隔的字符串写法（如 "https://a.com,https://*.b.com"）。
 $corsCfg = isset($config['api']['cors']) ? $config['api']['cors'] : [];
-$allowedMethods = isset($corsCfg['allowed_methods']) ? implode(', ', $corsCfg['allowed_methods']) : 'GET, POST, OPTIONS';
-$allowedOrigins = isset($corsCfg['allowed_origins']) ? $corsCfg['allowed_origins'] : ['*'];
 
-// 按配置限制来源：配置为 ['*'] 时放开；否则仅放行白名单内的 Origin
-$allowOrigin = '*';
-if (!in_array('*', $allowedOrigins, true)) {
-    $origin = isset($_SERVER['HTTP_ORIGIN']) ? trim($_SERVER['HTTP_ORIGIN']) : '';
-    if ($origin !== '' && in_array($origin, $allowedOrigins, true)) {
-        $allowOrigin = $origin;
-    } else {
-        // 不在白名单的来源：不允许跨域（非浏览器请求没有 Origin，保持同源可用）
-        $allowOrigin = '';
+$allowedMethods = isset($corsCfg['allowed_methods']) && is_array($corsCfg['allowed_methods'])
+    ? implode(', ', $corsCfg['allowed_methods'])
+    : 'GET, POST, OPTIONS';
+
+$allowedOrigins = isset($corsCfg['allowed_origins']) ? $corsCfg['allowed_origins'] : ['*'];
+if (is_string($allowedOrigins)) {
+    $allowedOrigins = preg_split('/[\s,]+/', $allowedOrigins, -1, PREG_SPLIT_NO_EMPTY);
+}
+if (!is_array($allowedOrigins) || empty($allowedOrigins)) {
+    $allowedOrigins = ['*'];
+}
+
+$allowAll      = in_array('*', $allowedOrigins, true);
+$requestOrigin = isset($_SERVER['HTTP_ORIGIN']) ? trim($_SERVER['HTTP_ORIGIN']) : '';
+$allowOrigin   = '';
+
+if ($allowAll) {
+    // 放开所有来源（使用通配符，不携带凭据；本系统 API 鉴权走 Header Token，不依赖 Cookie）
+    $allowOrigin = '*';
+} elseif ($requestOrigin !== '') {
+    foreach ($allowedOrigins as $pattern) {
+        if ($pattern === $requestOrigin) {
+            $allowOrigin = $requestOrigin;
+            break;
+        }
+        // 通配子域：https://*.example.com 匹配任意单层/多层子域
+        if (is_string($pattern) && strpos($pattern, '*') !== false) {
+            $regex = '#^' . str_replace('\\*', '.*', preg_quote($pattern, '#')) . '$#i';
+            if (preg_match($regex, $requestOrigin)) {
+                $allowOrigin = $requestOrigin;
+                break;
+            }
+        }
     }
 }
+
 if ($allowOrigin !== '') {
     header('Access-Control-Allow-Origin: ' . $allowOrigin);
     header('Vary: Origin');
+    // 仅在使用具体来源（非 *）且配置允许时下发凭据头
+    if ($allowOrigin !== '*' && !empty($corsCfg['allow_credentials'])) {
+        header('Access-Control-Allow-Credentials: true');
+    }
 }
-header('Access-Control-Allow-Methods: ' . $allowedMethods);
-header('Access-Control-Allow-Headers: Content-Type, Authorization, X-Requested-With, X-Bot-Key');
+
+// 允许的请求头：以配置为准，并始终放行鉴权相关头
+$allowedHeaders = isset($corsCfg['allowed_headers']) && is_array($corsCfg['allowed_headers'])
+    ? $corsCfg['allowed_headers']
+    : ['Content-Type', 'Authorization', 'X-Requested-With'];
+foreach (['Content-Type', 'Authorization', 'X-Requested-With', 'X-Bot-Key'] as $h) {
+    if (!in_array($h, $allowedHeaders, true)) {
+        $allowedHeaders[] = $h;
+    }
+}
+header('Access-Control-Allow-Headers: ' . implode(', ', $allowedHeaders));
+
+if (!empty($corsCfg['exposed_headers']) && is_array($corsCfg['exposed_headers'])) {
+    header('Access-Control-Expose-Headers: ' . implode(', ', $corsCfg['exposed_headers']));
+}
+if (!empty($corsCfg['max_age'])) {
+    header('Access-Control-Max-Age: ' . (int)$corsCfg['max_age']);
+}
 
 if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
-    http_response_code(200);
+    http_response_code(204);
     exit;
 }
 
 // ── 加载核心类 ──
 require_once __DIR__ . '/../core/DatabaseDriverInterface.php';
 require_once __DIR__ . '/../core/Database.php';
+require_once __DIR__ . '/../core/ChatService.php';
 
 // ── 初始化数据库 ──
 try {
     $db = Database::getInstance();
 } catch (Exception $e) {
-    header('Content-Type: application/json; charset=utf-8');
-    http_response_code(500);
-    echo json_encode([
-        'error'   => 'database_init_failed',
-        'message' => isset($config['app']['debug']) && $config['app']['debug']
+    json_error(500, 'database_init_failed',
+        isset($config['app']['debug']) && $config['app']['debug']
             ? $e->getMessage()
-            : '服务暂不可用，请检查 data/ 目录是否可写',
-    ], JSON_UNESCAPED_UNICODE);
-    exit;
+            : '服务暂不可用，请检查 data/ 目录是否可写');
 } catch (Throwable $e) {
-    header('Content-Type: application/json; charset=utf-8');
-    http_response_code(500);
-    echo json_encode([
-        'error'   => 'fatal_error',
-        'message' => $e->getMessage(),
-    ], JSON_UNESCAPED_UNICODE);
-    exit;
+    json_error(500, 'fatal_error', $e->getMessage());
 }
 
 // ════════════════════════════════════════════
@@ -133,19 +172,115 @@ try {
 
 /**
  * 输出 JSON 响应并终止
+ *
+ * 全部 API 的唯一出口，负责把响应归一化为统一信封：
+ *   { "success": bool, "data": object|array|null, "error": {code,message}|null }
+ *
+ * 以 HTTP 状态码为判定依据（避免业务字段名歧义）：
+ *   - 4xx/5xx：归一为错误信封。`error` 为对象时原样保留；为字符串（旧式）时收拢为
+ *     {code,message}，其余字段（如 retry_after）合并进 error；
+ *   - 2xx：归一为成功信封。已是 {success,data[,error]} 标准信封则保留其 data；
+ *     形如 ['data'=>...]（可含 message）的直接作为 data（避免 data.data）；
+ *     其余（旧式成功负载）剥离遗留 success 后整体作为 data（含 message）。
+ *
+ * 注意：业务字段请勿与顶层 success/data/error 重名（2xx 下 error 仅作普通字段处理）。
+ *
+ * @param int   $code HTTP 状态码
+ * @param mixed $data 响应负载
  */
 function json_response($code, $data) {
+    $code    = (int)$code;
+    $isError = $code >= 400;
+
+    if (!is_array($data)) {
+        // 非数组：成功原样作为 data；错误包成 error
+        $body = $isError
+            ? ['success' => false, 'data' => null, 'error' => ['code' => 'error', 'message' => (string)$data]]
+            : ['success' => true, 'data' => $data, 'error' => null];
+    } elseif ($isError) {
+        if (isset($data['error']) && is_array($data['error'])) {
+            // 已是标准错误信封（由 json_error 构造）
+            $err = $data['error'];
+        } else {
+            // 旧式错误负载：['error' => code, 'message' => msg, ...]
+            $err = [
+                'code'    => isset($data['error']) ? $data['error'] : 'error',
+                'message' => isset($data['message']) ? $data['message'] : '',
+            ];
+            $extra = $data;
+            unset($extra['error'], $extra['message'], $extra['success'], $extra['data']);
+            if (!empty($extra)) {
+                $err = array_merge($err, $extra);
+            }
+        }
+        $body = ['success' => false, 'data' => null, 'error' => $err];
+    } else {
+        // 2xx 成功
+        if (array_key_exists('success', $data) && array_key_exists('data', $data)) {
+            // 已是标准成功信封
+            $body = ['success' => true, 'data' => $data['data'], 'error' => null];
+        } elseif (array_key_exists('data', $data)
+            && count(array_diff(array_keys($data), ['data', 'message'])) === 0) {
+            // 形如 ['data' => ...]（可含 message）→ 直接作为 data，避免 data.data
+            $body = ['success' => true, 'data' => $data['data'], 'error' => null];
+        } else {
+            // 旧式成功负载：剥离遗留 success，其余（含 message）整体作为 data
+            unset($data['success']);
+            $body = ['success' => true, 'data' => $data, 'error' => null];
+        }
+    }
+
     http_response_code($code);
-    echo json_encode($data, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    echo json_encode($body, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
     exit;
 }
 
 /**
  * 成功响应快捷方式
+ * 信封：{success:true, data:<payload>, error:null}
+ *
+ * $message 为人类可读提示，统一写入 data.message（信封本身不含顶层 message）；
+ * 仅当 $data 为空数组或关联数组、且其内部尚无 message 时注入，避免破坏列表型载荷。
+ *
+ * @param mixed  $data    响应负载
+ * @param string $message 人类可读提示
+ * @param int    $status  HTTP 状态码（默认 200；创建类资源可传 201）
  */
-function json_success($data = [], $message = 'ok') {
-    $body = array_merge(['success' => true, 'message' => $message], $data);
-    json_response(200, $body);
+function json_success($data = [], $message = 'ok', $status = 200) {
+    if (is_array($data)
+        && $message !== null && $message !== '' && $message !== 'ok'
+        && !array_key_exists('message', $data)
+        && ($data === [] || $data !== array_values($data))) {
+        $data['message'] = $message;
+    }
+    json_response((int)$status, ['success' => true, 'data' => $data, 'error' => null]);
+}
+
+/**
+ * 错误响应快捷方式
+ * 信封：{success:false, data:null, error:{code,message}}
+ *
+ * @param int    $code    HTTP 状态码
+ * @param string $error   机器可读错误码
+ * @param string $message 人类可读信息
+ * @param array  $extra   附加到 error 对象的字段（如 retry_after）
+ */
+function json_error($code, $error, $message, $extra = []) {
+    $err = ['code' => $error, 'message' => $message];
+    if (is_array($extra) && !empty($extra)) {
+        $err = array_merge($err, $extra);
+    }
+    json_response($code, ['success' => false, 'data' => null, 'error' => $err]);
+}
+
+/**
+ * 强制请求方法（不匹配则 405 并终止）
+ * @param string $method 允许的方法，如 'POST'
+ */
+function require_method($method) {
+    if ($_SERVER['REQUEST_METHOD'] !== strtoupper($method)) {
+        json_error(405, 'method_not_allowed', '仅支持 ' . strtoupper($method) . ' 请求');
+    }
 }
 
 /**
@@ -168,6 +303,48 @@ function get_json_input() {
  */
 function generate_token($length = 32) {
     return bin2hex(random_bytes($length));
+}
+
+/**
+ * 计算会话令牌的存储哈希。
+ * 数据库只保存哈希（sha256），不保存明文令牌；
+ * 即使数据库/JSON 文件泄露，攻击者也无法直接复用会话。
+ */
+function hash_token($token) {
+    return hash('sha256', (string)$token);
+}
+
+/**
+ * 按令牌查找会话。
+ * 优先按哈希查询；命中旧版明文记录时自动升级为哈希存储（向后兼容，无需强制重新登录）。
+ *
+ * @param string $token 明文令牌
+ * @return array|null 会话记录（token 字段已归一化为哈希）
+ */
+function get_session_by_token($token) {
+    global $db;
+    if ($token === '') {
+        return null;
+    }
+
+    $session = $db->get('sessions', ['token' => hash_token($token)]);
+    if ($session) {
+        return $session;
+    }
+
+    // 兼容旧数据：历史上 token 以明文入库，命中后升级
+    $legacy = $db->get('sessions', ['token' => $token]);
+    if ($legacy) {
+        try {
+            $db->update('sessions', ['token' => hash_token($token)], ['id' => $legacy['id']]);
+        } catch (Exception $e) {
+            // 升级失败不阻塞业务
+        }
+        $legacy['token'] = hash_token($token);
+        return $legacy;
+    }
+
+    return null;
 }
 
 /**
@@ -235,6 +412,40 @@ function get_sensitive_words() {
 }
 
 /**
+ * 构建敏感词匹配正则（同一进程内只编译一次）
+ * 长词优先，避免短词先替换导致长词无法命中；使用 /iu 支持 Unicode 与大小写不敏感。
+ * @return string|null 无敏感词时返回 null
+ */
+function get_sensitive_words_pattern() {
+    static $pattern = null;
+    static $built = false;
+    if ($built) {
+        return $pattern;
+    }
+    $built = true;
+
+    $words = [];
+    foreach (get_sensitive_words() as $word) {
+        $word = trim($word);
+        if ($word !== '') {
+            $words[] = $word;
+        }
+    }
+    if (empty($words)) {
+        return $pattern = null;
+    }
+
+    usort($words, function ($a, $b) {
+        return strlen($b) - strlen($a);
+    });
+    $alts = array_map(function ($w) {
+        return preg_quote($w, '/');
+    }, $words);
+    $pattern = '/(' . implode('|', $alts) . ')/iu';
+    return $pattern;
+}
+
+/**
  * 敏感词过滤：将敏感词替换为 ***
  */
 function filter_sensitive_words($content) {
@@ -244,13 +455,13 @@ function filter_sensitive_words($content) {
         return $content;
     }
 
-    foreach (get_sensitive_words() as $word) {
-        $word = trim($word);
-        if ($word !== '') {
-            $content = str_ireplace($word, '***', $content);
-        }
+    $pattern = get_sensitive_words_pattern();
+    if ($pattern === null) {
+        return $content;
     }
-    return $content;
+
+    $result = preg_replace($pattern, '***', $content);
+    return $result === null ? $content : $result;
 }
 
 /**
@@ -335,6 +546,40 @@ function notification_available_methods($config)
     return $available;
 }
 
+/**
+ * 可选认证：有有效 Token 返回用户（不含密码），否则返回 null，不中断请求。
+ * 用于游客可访问、登录后展示个性化内容的端点（频道列表 / 服务器状态等）。
+ *
+ * @return array|null
+ */
+function optional_authenticate() {
+    global $db;
+
+    $token = get_bearer_token();
+    if ($token === '') {
+        return null;
+    }
+
+    $session = get_session_by_token($token);
+    if (!$session) {
+        return null;
+    }
+
+    if (isset($session['expires_at']) && strtotime($session['expires_at']) < time()) {
+        $db->delete('sessions', ['id' => $session['id']]);
+        return null;
+    }
+
+    $user = $db->get('users', ['id' => $session['user_id']]);
+    if (!$user || (isset($user['status']) && (int)$user['status'] !== 1)) {
+        return null;
+    }
+
+    maybe_refresh_token($session, $user);
+    unset($user['password']);
+    return $user;
+}
+
 function authenticate() {
     global $db, $config;
 
@@ -365,14 +610,14 @@ function authenticate() {
         json_response(401, ['error' => 'unauthorized', 'message' => '请先登录']);
     }
 
-    $session = $db->get('sessions', ['token' => $token]);
+    $session = get_session_by_token($token);
     if (!$session) {
         json_response(401, ['error' => 'invalid_token', 'message' => '令牌无效，请重新登录']);
     }
 
     // 检查过期
     if (isset($session['expires_at']) && strtotime($session['expires_at']) < time()) {
-        $db->delete('sessions', ['token' => $token]);
+        $db->delete('sessions', ['id' => $session['id']]);
         json_response(401, ['error' => 'token_expired', 'message' => '令牌已过期，请重新登录']);
     }
 
@@ -409,6 +654,29 @@ function authenticate() {
  * @return bool
  */
 function role_at_least($user_role, $required_role) {
+    global $config;
+
+    if ($user_role === $required_role) {
+        return true;
+    }
+
+    $rolesCfg = isset($config['user']['roles']) ? $config['user']['roles'] : [];
+
+    // 用户角色已在配置中定义：沿 extends 链向上查找是否包含所需角色
+    if (isset($rolesCfg[$user_role])) {
+        $role = $user_role;
+        $seen = [];
+        while ($role !== null && isset($rolesCfg[$role]) && !isset($seen[$role])) {
+            if ($role === $required_role) {
+                return true;
+            }
+            $seen[$role] = true;
+            $role = isset($rolesCfg[$role]['extends']) ? $rolesCfg[$role]['extends'] : null;
+        }
+        return false;
+    }
+
+    // 回退：内置层级（角色未在配置中定义时）
     $hierarchy = ['guest' => 0, 'member' => 1, 'vip' => 2, 'admin' => 3];
     $userLevel = isset($hierarchy[$user_role]) ? $hierarchy[$user_role] : 0;
     $requiredLevel = isset($hierarchy[$required_role]) ? $hierarchy[$required_role] : 0;
@@ -447,11 +715,10 @@ function maybe_refresh_token($session, $user) {
     if (!isset($session['expires_at'])) return;
     $remaining = strtotime($session['expires_at']) - time();
 
-    // 剩余时间不足一半时自动续期
-    if ($remaining < $sessionLifetime / 2) {
-        $token = get_bearer_token();
+    // 剩余时间不足一半时自动续期（按会话 id 更新，避免依赖明文令牌）
+    if ($remaining < $sessionLifetime / 2 && isset($session['id'])) {
         $newExpires = date('Y-m-d H:i:s', time() + $sessionLifetime);
-        $db->update('sessions', ['expires_at' => $newExpires], ['token' => $token]);
+        $db->update('sessions', ['expires_at' => $newExpires], ['id' => $session['id']]);
         header('X-Token-Refreshed: 1');
         header('X-Token-Expires: ' . $newExpires);
     }
@@ -684,42 +951,51 @@ function maintenance_cleanup() {
 
         $now = time();
 
-        // 1. 会话清理：删除已过期超过 delete_expired_hours 的会话
-        $scfg = $cfg['session_cleanup'] ?? [];
-        $expiredHours = (int)($scfg['delete_expired_hours'] ?? 24);
-        $cutoff = date('Y-m-d H:i:s', $now - $expiredHours * 3600);
-        $expired = $db->select('sessions', ['expires_at <' => $cutoff], '*', 'id ASC', 500);
-        foreach ($expired as $s) {
-            $db->delete('sessions', ['id' => $s['id']]);
-        }
-
-        // 2. 消息清理：删除超过 delete_after_days 的旧消息
-        $mcfg = $cfg['message_cleanup'] ?? [];
-        $days = (int)($mcfg['delete_after_days'] ?? 0);
-        if ($days > 0) {
-            $msgCutoff = date('Y-m-d H:i:s', $now - $days * 86400);
-            $batch = (int)($mcfg['batch_size'] ?? 1000);
-            $old = $db->select('messages', ['created_at <' => $msgCutoff], '*', 'id ASC', $batch);
-            foreach ($old as $m) {
-                $db->delete('messages', ['id' => $m['id']]);
+        // 批量删除包裹在一个事务里：LocalDriver 下把逐条写盘合并为每表一次落盘
+        $db->beginTransaction();
+        try {
+            // 1. 会话清理：删除已过期超过 delete_expired_hours 的会话
+            $scfg = $cfg['session_cleanup'] ?? [];
+            $expiredHours = (int)($scfg['delete_expired_hours'] ?? 24);
+            $cutoff = date('Y-m-d H:i:s', $now - $expiredHours * 3600);
+            $expired = $db->select('sessions', ['expires_at <' => $cutoff], '*', 'id ASC', 500);
+            foreach ($expired as $s) {
+                $db->delete('sessions', ['id' => $s['id']]);
             }
-        }
 
-        // 3. 上传文件清理：删除无关联消息且超过 orphaned_check_days 的孤立文件
-        $ucfg = $cfg['upload_cleanup'] ?? [];
-        if (!empty($ucfg['delete_orphaned_files'])) {
-            $orphanDays = (int)($ucfg['orphaned_check_days'] ?? 7);
-            $orphanCutoff = date('Y-m-d H:i:s', $now - $orphanDays * 86400);
-            $uploadRoot = isset($config['upload']['local_path'])
-                ? rtrim($config['upload']['local_path'], '/') . '/'
-                : dirname(__DIR__) . '/uploads/';
-            $orphans = $db->select('uploads', ['message_id' => [null, 0], 'created_at <' => $orphanCutoff], '*', 'id ASC', 200);
-            foreach ($orphans as $u) {
-                $db->delete('uploads', ['id' => $u['id']]);
-                if (isset($u['file_path']) && strpos($u['file_path'], '/uploads/') !== false) {
-                    @unlink($uploadRoot . basename($u['file_path']));
+            // 2. 消息清理：删除超过 delete_after_days 的旧消息
+            $mcfg = $cfg['message_cleanup'] ?? [];
+            $days = (int)($mcfg['delete_after_days'] ?? 0);
+            if ($days > 0) {
+                $msgCutoff = date('Y-m-d H:i:s', $now - $days * 86400);
+                $batch = (int)($mcfg['batch_size'] ?? 1000);
+                $old = $db->select('messages', ['created_at <' => $msgCutoff], '*', 'id ASC', $batch);
+                foreach ($old as $m) {
+                    $db->delete('messages', ['id' => $m['id']]);
                 }
             }
+
+            // 3. 上传文件清理：删除无关联消息且超过 orphaned_check_days 的孤立文件
+            $ucfg = $cfg['upload_cleanup'] ?? [];
+            if (!empty($ucfg['delete_orphaned_files'])) {
+                $orphanDays = (int)($ucfg['orphaned_check_days'] ?? 7);
+                $orphanCutoff = date('Y-m-d H:i:s', $now - $orphanDays * 86400);
+                $uploadRoot = isset($config['upload']['local_path'])
+                    ? rtrim($config['upload']['local_path'], '/') . '/'
+                    : dirname(__DIR__) . '/uploads/';
+                $orphans = $db->select('uploads', ['message_id' => [null, 0], 'created_at <' => $orphanCutoff], '*', 'id ASC', 200);
+                foreach ($orphans as $u) {
+                    $db->delete('uploads', ['id' => $u['id']]);
+                    if (isset($u['file_path']) && strpos($u['file_path'], '/uploads/') !== false) {
+                        @unlink($uploadRoot . basename($u['file_path']));
+                    }
+                }
+            }
+
+            $db->commit();
+        } catch (Exception $e) {
+            $db->rollback();
+            throw $e;
         }
     } catch (Exception $e) {
         error_log('[maintenance_cleanup] ' . $e->getMessage());

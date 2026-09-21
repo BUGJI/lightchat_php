@@ -106,10 +106,12 @@ class LightChatBot:
     def _request(self, method, path, body=None, files=None, raw=False):
         """
         发送 HTTP 请求，自动添加 X-Bot-Key 认证头
-        :return: (status, parsed_json) 或 raw=bytes
+        响应为统一信封 {success, data, error}：成功时返回解包后的 data，
+        失败（success=false 或非 2xx）时抛出 LightChatBotError。
+        :return: (status, data) 或 raw=bytes
         """
         url = self._url(path)
-        headers = {"X-Bot-Key": self.bot_key}
+        headers = {"X-Bot-Key": str(self.bot_key)}
 
         if files:
             # multipart 上传
@@ -133,8 +135,9 @@ class LightChatBot:
             try:
                 err_data = json.loads(err_body)
             except Exception:
-                err_data = {"error": "http_error", "message": err_body[:200]}
-            raise LightChatBotError(e.code, err_data.get("message", str(e)), err_data)
+                err_data = {"success": False, "data": None,
+                            "error": {"code": "http_error", "message": err_body[:200]}}
+            raise LightChatBotError(e.code, self._error_message(err_data, str(e)), err_data)
         except Exception as e:
             raise LightChatBotError(0, str(e)) from e
 
@@ -143,9 +146,30 @@ class LightChatBot:
 
         text = resp.read().decode("utf-8")
         try:
-            return resp.status, json.loads(text)
+            payload = json.loads(text)
         except json.JSONDecodeError:
             return resp.status, text
+
+        # 统一信封 {success, data, error}：成功解包 data，失败抛错
+        if isinstance(payload, dict) and "success" in payload:
+            if not payload.get("success"):
+                raise LightChatBotError(
+                    resp.status, self._error_message(payload, "未知错误"), payload
+                )
+            return resp.status, payload.get("data")
+        return resp.status, payload
+
+    @staticmethod
+    def _error_message(payload, fallback):
+        """从统一错误信封中提取人类可读信息"""
+        err = payload.get("error") if isinstance(payload, dict) else None
+        if isinstance(err, dict):
+            return err.get("message") or err.get("code") or fallback
+        if isinstance(err, str) and err:
+            return err
+        if isinstance(payload, dict):
+            return payload.get("message") or fallback
+        return fallback
 
     @staticmethod
     def _encode_multipart(files, fields):
@@ -180,11 +204,8 @@ class LightChatBot:
         return self._request("POST", path, body=body, files=files)
 
     def _ok(self, result):
-        """检查 API 响应是否成功"""
-        status, data = result
-        if isinstance(data, dict) and data.get("success") is not None:
-            if not data["success"]:
-                raise LightChatBotError(status, data.get("message", "未知错误"), data)
+        """返回解包后的 data（_request 已在 success=false / 非 2xx 时抛错）"""
+        _, data = result
         return data
 
     # ════════════════════════════════════════════
@@ -254,7 +275,7 @@ class LightChatBot:
         :param parent_id:      引用回复的消息 ID
         :param mentioned_users: @ 的用户 ID 列表
         :param file_id:        关联上传文件 ID
-        :return: {"success":true,"message_id":123}
+        :return: {"message_id":123}
         """
         body = {
             "channel_id": int(channel_id),
@@ -323,7 +344,7 @@ class LightChatBot:
     def upload_file(self, file_path):
         """
         上传文件
-        :return: {"success":true, "file_id":123, "file_url":"...", ...}
+        :return: {"file_id":123, "file_url":"...", ...}
         """
         if not os.path.isfile(file_path):
             raise FileNotFoundError(file_path)
@@ -333,7 +354,7 @@ class LightChatBot:
 
     def send_image(self, channel_id, image_path, caption=""):
         """快捷方法：上传图片并发送到频道"""
-        up = self.upload_file(image_path)
+        up = self.upload_file(image_path) or {}
         return self.send_message(
             channel_id=channel_id,
             content=caption or os.path.basename(image_path),
@@ -343,7 +364,7 @@ class LightChatBot:
 
     def send_file(self, channel_id, file_path, caption=""):
         """快捷方法：上传文件并发送到频道"""
-        up = self.upload_file(file_path)
+        up = self.upload_file(file_path) or {}
         return self.send_message(
             channel_id=channel_id,
             content=caption or os.path.basename(file_path),
@@ -371,15 +392,16 @@ class LightChatBot:
         return data.get("user", {}) if isinstance(data, dict) else {}
 
     # ════════════════════════════════════════════
-    #  长轮询 / 消息接收
+    #  短轮询 / 消息接收
     # ════════════════════════════════════════════
 
-    def poll(self, channel_ids=None, since_id=None, timeout=25):
+    def poll(self, channel_ids=None, since_id=None, timeout=None):
         """
-        单次轮询：检查指定频道的新消息
+        单次短轮询：检查指定频道的新消息（服务端立即返回，不阻塞）
+
         :param channel_ids: 频道 ID 列表，None 表示自动从已加入频道获取
         :param since_id:    上次的 latest_id
-        :param timeout:     长轮询超时（最大 30 秒）
+        :param timeout:     已废弃（保留仅为向后兼容，服务端不再长轮询）
         :return: {"messages": [...], "latest_id": int}
         """
         if channel_ids is None:
@@ -392,11 +414,10 @@ class LightChatBot:
         params = {
             "channels": ",".join(str(c) for c in channel_ids),
             "since_id": since_id or self._since_id,
-            "timeout": min(timeout, 30),
         }
 
         _, data = self._get("/messages/poll.php", params)
-        if isinstance(data, dict) and data.get("success") is not False:
+        if isinstance(data, dict):
             msgs = data.get("messages", [])
             if msgs:
                 self._since_id = data.get("latest_id", self._since_id)
@@ -412,7 +433,7 @@ class LightChatBot:
             bot.run(channel_ids=[1,2])   # 只监听指定频道
             bot.run(block=False)         # 后台线程运行
 
-        :param poll_interval: 轮询间隔（秒），长轮询也会自动回退到这个值
+        :param poll_interval: 轮询间隔（秒），每次短轮询后休眠该时长
         :param channel_ids:   监听的频道 ID 列表，None=全部已加入
         :param block:         True=阻塞当前线程, False=后台线程
         """
@@ -437,6 +458,10 @@ class LightChatBot:
 
                     for msg in result.get("messages", []):
                         self._dispatch(msg)
+
+                    # 短轮询：服务端立即返回，按间隔休眠避免忙循环
+                    if self._running:
+                        time.sleep(poll_interval)
 
                 except LightChatBotError as e:
                     if self._on_error_cb:

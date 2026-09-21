@@ -340,14 +340,19 @@ return [
         // API版本
         'version' => 'v1',
         
-        // CORS跨域配置
+        // CORS 跨域配置
+        // allowed_origins 支持三种写法（也可写入 config.local.php 覆盖，安装向导可填）：
+        //   ['*']                               放开所有来源（默认）
+        //   ['https://a.com', 'https://b.com']  精确白名单
+        //   ['https://*.example.com']           通配子域
+        // 也兼容逗号/空格分隔的字符串：'https://a.com,https://*.b.com'
         'cors' => [
             'enabled' => true,
-            'allowed_origins' => ['*'],              // 生产环境请限制具体域名
+            'allowed_origins' => ['*'],              // 生产环境建议改为具体域名白名单
             'allowed_methods' => ['GET', 'POST', 'OPTIONS'],
-            'allowed_headers' => ['Content-Type', 'Authorization', 'X-Requested-With'],
-            'exposed_headers' => ['X-Total-Count', 'X-RateLimit-Remaining'],
-            'allow_credentials' => true,
+            'allowed_headers' => ['Content-Type', 'Authorization', 'X-Requested-With', 'X-Bot-Key'],
+            'exposed_headers' => ['X-Total-Count', 'X-RateLimit-Remaining', 'X-Token-Refreshed', 'X-Token-Expires'],
+            'allow_credentials' => true,             // 仅在使用具体白名单来源（非 *）时下发；本系统用 Header Token，通常无需 Cookie 凭据
             'max_age' => 86400,                      // 预检请求缓存24小时
         ],
     ],
@@ -489,7 +494,7 @@ return [
         // 速率限制（基于IP）
         'ip_rate_limit' => [
             'enabled' => true,
-            'requests_per_minute' => 120,               // 单IP每分钟最多请求
+            'requests_per_minute' => 300,               // 单IP每分钟最多请求（短轮询下每客户端约 20-40 次/分钟）
             'requests_per_hour' => 1000,                // 单IP每小时最多请求
             'ban_on_exceed' => false,                   // 是否自动封禁超限IP
             'ban_duration_minutes' => 60,               // 封禁时长

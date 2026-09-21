@@ -143,6 +143,28 @@ function lc_validate($in) {
     $v['upload_enabled'] = isset($in['upload_enabled']) ? 1 : 0;
     $v['sensitive_enabled'] = isset($in['sensitive_enabled']) ? 1 : 0;
 
+    // 跨域来源（CORS）：逗号/空格分隔；'*' 表示放开所有来源
+    $v['cors_origins'] = ['*'];
+    $rawCors = trim(isset($in['cors_origins']) ? $in['cors_origins'] : '');
+    if ($rawCors !== '') {
+        $origins = [];
+        foreach (preg_split('/[\s,]+/', $rawCors, -1, PREG_SPLIT_NO_EMPTY) as $p) {
+            if ($p === '*') {
+                $origins = ['*'];
+                break;
+            }
+            // 允许 http(s)://域名[:端口]，支持通配子域 https://*.example.com
+            if (!preg_match('#^https?://(\*\.)?[A-Za-z0-9.\-]+(:\d+)?$#', $p)) {
+                $errors[] = '跨域来源格式不正确：' . $p;
+                continue;
+            }
+            $origins[] = $p;
+        }
+        if (!empty($origins)) {
+            $v['cors_origins'] = array_values(array_unique($origins));
+        }
+    }
+
     // 管理员账号
     $v['admin_username'] = trim(isset($in['admin_username']) ? $in['admin_username'] : '');
     $v['admin_email'] = trim(isset($in['admin_email']) ? $in['admin_email'] : '');
@@ -225,6 +247,11 @@ function lc_do_install($v) {
                 'requests_per_hour'   => $v['ip_rpm'] * 10,
                 'ban_on_exceed'       => false,
                 'ban_duration_minutes'=> 60,
+            ],
+        ],
+        'api' => [
+            'cors' => [
+                'allowed_origins' => $v['cors_origins'],
             ],
         ],
     ];
@@ -368,6 +395,10 @@ $form = [
     'login_max_fail'=> isset($formValues['login_max_fail']) ? $formValues['login_max_fail'] : $config['security']['login_protection']['max_failures'],
     'login_lock_min'=> isset($formValues['login_lock_min']) ? $formValues['login_lock_min'] : $config['security']['login_protection']['lockout_minutes'],
     'ip_rpm'        => isset($formValues['ip_rpm']) ? $formValues['ip_rpm'] : $config['security']['ip_rate_limit']['requests_per_minute'],
+    'cors_origins'  => isset($formValues['cors_origins'])
+        ? (is_array($formValues['cors_origins']) ? implode(', ', $formValues['cors_origins']) : $formValues['cors_origins'])
+        : (isset($config['api']['cors']['allowed_origins']) && is_array($config['api']['cors']['allowed_origins'])
+            ? implode(', ', $config['api']['cors']['allowed_origins']) : '*'),
 ];
 
 $checks = lc_checks();
@@ -505,6 +536,11 @@ foreach ($checks as $c) {
             <div class="field check">
                 <input type="checkbox" id="debug" name="debug" value="1" <?php echo $form['debug'] ? 'checked' : ''; ?>>
                 <label for="debug">调试模式（生产环境请勿开启）</label>
+            </div>
+            <div class="field">
+                <label>跨域来源（CORS） <span class="hint">逗号分隔，* 表示全部</span></label>
+                <input type="text" name="cors_origins" value="<?php echo htmlspecialchars($form['cors_origins']); ?>" placeholder="https://a.com, https://*.example.com">
+                <div class="small" style="margin-top:4px">留空或填 <span class="code">*</span> 允许所有来源；也可填具体域名 / 通配子域限制跨域访问。</div>
             </div>
 
             <h2>③ 配额与限制</h2>

@@ -7,7 +7,8 @@
 error_reporting(E_ALL);
 ini_set('display_errors', '0');
 header('Content-Type: application/json; charset=utf-8');
-header('Access-Control-Allow-Origin: *');
+// 诊断接口：不开放跨域，避免被任意站点探测服务器环境
+header('X-Content-Type-Options: nosniff');
 
 $baseDir = realpath(__DIR__ . '/..');
 $checks  = [];
@@ -39,9 +40,8 @@ $files = [
 foreach ($files as $label => $path) {
     $exists = file_exists($path) && is_readable($path);
     $checks['file_' . $label] = [
-        'ok'    => $exists,
-        'path'  => str_replace($baseDir, '...', $path),
-        'msg'   => $exists ? 'OK' : '文件不存在或不可读',
+        'ok'  => $exists,
+        'msg' => $exists ? 'OK' : '文件不存在或不可读',
     ];
 }
 
@@ -60,8 +60,6 @@ foreach ($dirs as $label => $path) {
         'ok'      => $exists && $writable,
         'exists'  => $exists,
         'writable'=> $writable,
-        'path'    => str_replace($baseDir, '...', $path),
-        'owner'   => $exists ? (function_exists('posix_getpwuid') ? posix_getpwuid(fileowner($path))['name'] : '?') : '-',
         'msg'     => !$exists ? '目录不存在，需创建' : (!$writable ? '目录不可写！' : 'OK'),
     ];
 
@@ -105,9 +103,15 @@ foreach ($checks as $c) {
 
 http_response_code($allOk ? 200 : 500);
 echo json_encode([
-    'all_ok'  => $allOk,
-    'base_dir'=> str_replace($baseDir, '...', $baseDir) . '/',
-    'checks'  => $checks,
-    'hint'    => $allOk ? '一切正常，如果仍报错请检查 PHP 错误日志'
-                        : '请修复上面标记为 ❌ 的项',
+    'success' => $allOk,
+    'data'    => [
+        'all_ok' => $allOk,
+        'checks' => $checks,
+        'hint'   => $allOk ? '一切正常，如果仍报错请检查 PHP 错误日志'
+                           : '请修复上面标记为 ❌ 的项',
+    ],
+    'error'   => $allOk ? null : [
+        'code'    => 'health_check_failed',
+        'message' => '环境检查未通过，请修复上面标记为 ❌ 的项',
+    ],
 ], JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);

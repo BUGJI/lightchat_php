@@ -116,11 +116,20 @@ try {
         }
     }
 
-    $messageId = $db->insert('messages', $messageData);
+    // 插入 + 文件归属同一事务：LocalDriver 下合并为一次落盘
+    $db->beginTransaction();
+    try {
+        $messageId = $db->insert('messages', $messageData);
 
-    // 关联文件到消息（消息插入成功后再更新归属）
-    if ($fileId !== null && $fileId > 0) {
-        $db->update('uploads', ['message_id' => $messageId], ['id' => $fileId]);
+        // 关联文件到消息（消息插入成功后再更新归属）
+        if ($fileId !== null && $fileId > 0) {
+            $db->update('uploads', ['message_id' => $messageId], ['id' => $fileId]);
+        }
+
+        $db->commit();
+    } catch (Exception $e) {
+        $db->rollback();
+        throw $e;
     }
 
     // ── 触发离线通知（接收消息时检查） ──
@@ -172,8 +181,7 @@ try {
     json_response(500, ['error' => 'send_failed', 'message' => '消息发送失败']);
 }
 
-json_response(201, [
-    'success'    => true,
+json_success([
     'message_id' => $messageId,
     'content'    => $content,
-]);
+], 'ok', 201);

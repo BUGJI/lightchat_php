@@ -81,12 +81,10 @@ $db->insert('audit_logs', [
     'detail'      => json_encode(['bot_username' => $botUsername, 'creator_id' => $user['id']], JSON_UNESCAPED_UNICODE),
 ]);
 
-json_response(201, [
-    'success'    => true,
-    'message'    => 'Bot 创建成功',
+json_success([
     'user_id'    => $userId,
     'username'   => $botUsername,
     'api_key'    => $apiKey,
     'creator_id' => (int)$user['id'],
     'hint'       => '请求时在 Header 中加入 X-Bot-Key: ' . $apiKey,
-]);
+], 'Bot 创建成功', 201);

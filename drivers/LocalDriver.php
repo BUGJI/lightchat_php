@@ -70,6 +70,13 @@ class LocalDriver implements DatabaseDriverInterface {
             $this->cacheMtime = [];
         }
 
+        // 事务内：本请求已加载的表不再重载。
+        // 否则 loadTable 命中缓存时会把 $this->tables 覆盖回旧快照，
+        // 导致事务中对同一表的多次写互相丢失（只保留最后一次）。
+        if ($this->inTransaction && isset($this->tables[$table])) {
+            return;
+        }
+
         $file = $this->dataPath . $table . '.json';
         $exists = file_exists($file);
         $mtime = $exists ? (int)@filemtime($file) : 0;
@@ -116,7 +123,8 @@ class LocalDriver implements DatabaseDriverInterface {
         }
         
         $file = $this->dataPath . $table . '.json';
-        $content = json_encode($this->tables[$table], JSON_PRETTY_PRINT);
+        // 紧凑编码（中文/斜杠不转义）：显著减小文件体积与序列化开销
+        $content = json_encode($this->tables[$table], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
 
         // 原子写：先写临时文件再 rename，避免写一半崩溃导致数据损坏
         $tmp = $file . '.tmp.' . getmypid();
@@ -342,14 +350,18 @@ class LocalDriver implements DatabaseDriverInterface {
         foreach ($where as $key => $value) {
             if (strpos($key, ' ') !== false) {
                 // 解析复杂条件，如 "id > :id"
-                if (preg_match('/(\w+)\s*(=|>|<|>=|<=|!=)\s*/', $key, $matches)) {
+                // 注意：多字符操作符（>= / <= / !=）必须排在单字符之前，
+                // 否则 alternation 会先匹配 < 或 > 导致操作符被截断。
+                if (preg_match('/(\w+)\s*(>=|<=|!=|=|>|<)\s*/', $key, $matches)) {
                     $field = $matches[1];
                     $operator = $matches[2];
                     $rowValue = $row[$field] ?? null;
                     
-                    // IN 支持：值为数组时判断包含
-                    if ($operator === '=' && is_array($value)) {
-                        if (!in_array($rowValue, $value)) return false;
+                    // IN / NOT IN 支持：值为数组时判断包含
+                    if (($operator === '=' || $operator === '!=') && is_array($value)) {
+                        $inList = in_array($rowValue, $value, false);
+                        if ($operator === '=' && !$inList) return false;
+                        if ($operator === '!=' && $inList) return false;
                         continue;
                     }
                     

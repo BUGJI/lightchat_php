@@ -41,10 +41,24 @@ if ($channel['type'] === 'private') {
 }
 
 $rows = $db->select('channel_members', ['channel_id' => $channelId], '*', 'id ASC', 0);
+
+// 批量取用户（一次 IN 查询，避免 N+1）
+$userIds = [];
+foreach ($rows as $row) {
+    $userIds[] = (int)$row['user_id'];
+}
+$userMap = [];
+if (!empty($userIds)) {
+    foreach ($db->select('users', ['id' => array_values(array_unique($userIds))]) as $u) {
+        $userMap[(int)$u['id']] = $u;
+    }
+}
+
 $members = [];
 foreach ($rows as $row) {
-    $u = $db->get('users', ['id' => (int)$row['user_id']]);
-    if (!$u) continue;
+    $uid = (int)$row['user_id'];
+    if (!isset($userMap[$uid])) continue;
+    $u = $userMap[$uid];
     $members[] = [
         'user_id'  => (int)$u['id'],
         'username' => $u['username'],

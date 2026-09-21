@@ -63,16 +63,21 @@ if (!isset($_FILES['file']) || $_FILES['file']['error'] !== UPLOAD_ERR_OK) {
 $file = $_FILES['file'];
 
 // ── 检测 MIME 类型（多级回退） ──
+// $mimeReliable 标记 MIME 是否来自真实内容探测（而非扩展名推断），
+// 只有可靠探测结果才参与后续的严格类型校验。
 $mimeType = null;
+$mimeReliable = false;
 if (function_exists('finfo_open')) {
     $finfo = @finfo_open(FILEINFO_MIME_TYPE);
     if ($finfo) {
         $mimeType = @finfo_file($finfo, $file['tmp_name']);
         @finfo_close($finfo);
+        $mimeReliable = !empty($mimeType);
     }
 }
 if (empty($mimeType) && function_exists('mime_content_type')) {
     $mimeType = @mime_content_type($file['tmp_name']);
+    $mimeReliable = !empty($mimeType);
 }
 if (empty($mimeType)) {
     // 最后回退：通过扩展名推断
@@ -97,8 +102,13 @@ if (empty($mimeType)) {
 }
 $extension = strtolower(pathinfo($file['name'], PATHINFO_EXTENSION));
 
-// ── 显式拒绝危险扩展名（SVG 可内嵌脚本） ──
-if (in_array($extension, ['svg', 'svgz', 'html', 'htm', 'php', 'phtml', 'shtml', 'jsp', 'asp', 'aspx', 'cgi', 'pl'], true)) {
+// ── 显式拒绝危险扩展名（SVG/脚本/配置文件等） ──
+if (in_array($extension, [
+    'svg', 'svgz', 'html', 'htm', 'xhtml', 'shtml', 'shtm',
+    'php', 'phtml', 'pht', 'phps', 'phar',
+    'jsp', 'jspx', 'asp', 'aspx', 'cgi', 'pl', 'py', 'rb', 'sh',
+    'htaccess', 'ini', 'user',
+], true)) {
     json_response(400, ['error' => 'unsupported_type', 'message' => '不支持的文件类型（' . $extension . '）']);
 }
 
@@ -113,11 +123,24 @@ foreach (['image', 'audio', 'video', 'file'] as $cat) {
     $exts  = isset($cfg['extensions']) ? $cfg['extensions'] : [];
     $mimes = isset($cfg['mime_types']) ? $cfg['mime_types'] : [];
 
-    if (in_array($extension, $exts) || in_array($mimeType, $mimes)) {
-        $category   = $cat;
-        $typeConfig = $cfg;
-        break;
+    // 扩展名必须命中该类别白名单（决定落盘后缀，是安全关键）
+    if (!in_array($extension, $exts, true)) {
+        continue;
     }
+
+    // 图片类别：MIME 可靠时要求命中白名单，并验证确为真实图像（防止伪造扩展名）
+    if ($cat === 'image') {
+        if ($mimeReliable && !in_array($mimeType, $mimes, true)) {
+            continue;
+        }
+        if (function_exists('getimagesize') && @getimagesize($file['tmp_name']) === false) {
+            continue;
+        }
+    }
+
+    $category   = $cat;
+    $typeConfig = $cfg;
+    break;
 }
 
 if ($typeConfig === null) {
@@ -234,8 +257,7 @@ try {
 if ($existing && isset($existing['id'])) {
     // 内容重复 → 删掉刚上传的文件，复用已有记录
     @unlink($destPath);
-    json_response(200, [
-        'success'   => true,
+    json_success([
         'file_id'   => (int)$existing['id'],
         'file_url'  => $existing['file_path'] ?? '',
         'file_name' => $file['name'],
@@ -262,30 +284,19 @@ try {
     json_response(500, ['error' => 'record_failed', 'message' => '文件记录保存失败']);
 }
 
-json_response(201, [
-    'success'   => true,
+json_success([
     'file_id'   => $fileId,
     'file_url'  => $urlPrefix . $uniqueName,
     'file_name' => $file['name'],
     'file_size' => $file['size'],
     'file_type' => $category,
     'mime_type' => $mimeType,
-]);
+], 'ok', 201);
 
 } catch (Exception $e) {
     // 最后防线：任何未捕获异常都返回 JSON
-    http_response_code(500);
-    echo json_encode([
-        'error'   => 'internal_error',
-        'message' => '服务器内部错误: ' . $e->getMessage(),
-    ], JSON_UNESCAPED_UNICODE);
-    exit;
+    json_error(500, 'internal_error', '服务器内部错误: ' . $e->getMessage());
 } catch (Throwable $e) {
     // PHP 7: 捕获 Error 类型
-    http_response_code(500);
-    echo json_encode([
-        'error'   => 'fatal_error',
-        'message' => '服务器致命错误: ' . $e->getMessage(),
-    ], JSON_UNESCAPED_UNICODE);
-    exit;
+    json_error(500, 'fatal_error', '服务器致命错误: ' . $e->getMessage());
 }

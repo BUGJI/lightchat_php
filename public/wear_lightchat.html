@@ -307,7 +307,7 @@ const S = {
   joinedIds: new Set(),
   messages: [],     // current chat messages
   pollTimer: null,
-  pollInterval: 2000,
+  pollInterval: 3000,
   lastPollId: 0,
   lastMsgTime: 0,
   userCache: new Map(), // uid → {username, avatar}
@@ -316,6 +316,15 @@ const S = {
   unreadSnap: {},       // 列表页未读基线 {'c<id>':n,'p<id>':n}
   lastMsgUserId: 0,     // 消息分组辅助（气泡连续归属）
 };
+
+// 解析 JSON 响应；非 JSON（如致命错误页）时归一为统一错误对象
+async function parseJsonBody(res) {
+  try {
+    return await res.json();
+  } catch (e) {
+    return { success: false, data: null, error: { code: 'bad_response', message: '服务器响应异常（HTTP ' + res.status + '）' } };
+  }
+}
 
 // ── API 封装（12s 超时）──
 async function api(path, opts = {}) {
@@ -326,9 +335,14 @@ async function api(path, opts = {}) {
   const timer = setTimeout(() => ac.abort(), 12000);
   try {
     const res = await fetch(url, { ...opts, headers, signal: ac.signal });
-    const data = await res.json();
-    if (!res.ok) { const err = new Error(data.message || '请求失败'); err.status = res.status; throw err; }
-    return data;
+    const body = await parseJsonBody(res);
+    if (!res.ok || !body.success) {
+      const e = body.error || {};
+      const err = new Error(e.message || e.code || '请求失败');
+      err.status = res.status;
+      throw err;
+    }
+    return body.data;
   } catch (e) {
     if (e.name === 'AbortError') throw new Error('请求超时');
     throw e;
@@ -382,6 +396,8 @@ async function doRegister() {
 }
 
 function doLogout() {
+  // 通知服务端销毁会话（失败不影响本地登出）
+  if (S.token) { try { api('/token/logout.php', { method: 'POST' }).catch(() => {}); } catch (e) {} }
   clearAuth();
   showPage('login');
 }
@@ -985,7 +1001,7 @@ async function joinCurrentChannel() {
     toast('已加入频道');
   } catch (e) { toast('加入失败: ' + e.message, true); }
 }
-// ── 轮询（双模式：list 未读汇总+震动 / chatbox 长轮询增量渲染）──
+// ── 轮询（双模式：list 未读汇总+震动 / chatbox 短轮询增量渲染）──
 function startPolling(mode) {
   if (mode) S.pollMode = mode;
   stopPolling();
@@ -1019,18 +1035,24 @@ async function pollChatbox() {
   if (!S.activeChat) { S.pollMode = 'list'; return; }
   const ac = new AbortController();
   S.pollAbort = ac;
-  const t = setTimeout(() => ac.abort(), 13000); // 服务端长轮询 10s，超时余量
+  const t = setTimeout(() => ac.abort(), 8000); // 短轮询安全超时
   try {
     let url;
     if (S.activeChat.type === 'channel') {
-      url = API_BASE + '/api/messages/poll.php?channels=' + S.activeChat.id + '&since_id=' + S.lastPollId + '&timeout=10';
+      url = API_BASE + '/api/sync.php?lists=0&channels=' + S.activeChat.id + '&since_id=' + S.lastPollId;
     } else {
-      url = API_BASE + '/api/messages/poll.php?private_chat_id=' + S.activeChat.id + '&since_id=' + S.lastPollId + '&timeout=10';
+      url = API_BASE + '/api/sync.php?lists=0&private_chat_id=' + S.activeChat.id + '&private_since_id=' + S.lastPollId;
     }
     const headers = { 'Authorization': 'Bearer ' + S.token };
     const res = await fetch(url, { headers, signal: ac.signal });
     clearTimeout(t);
-    const data = await res.json();
+    const body = await parseJsonBody(res);
+    if (!res.ok || !body.success) {
+      const err = new Error((body.error && body.error.message) || '请求失败');
+      err.status = res.status;
+      throw err;
+    }
+    const data = body.data || {};
     if (data.messages && data.messages.length > 0) {
       const existingIds = new Set(S.messages.map(m => m.id));
       const fresh = [];
@@ -1039,7 +1061,10 @@ async function pollChatbox() {
       }
       if (fresh.length > 0) {
         appendMessages(fresh); // 增量上屏，正在翻历史时不打扰
-        S.lastPollId = Math.max(data.latest_id || 0, fresh[fresh.length - 1].id || 0, S.lastPollId);
+        const nextCursor = S.activeChat.type === 'private'
+          ? (data.private_latest_id || data.latest_id || 0)
+          : (data.latest_id || data.private_latest_id || 0);
+        S.lastPollId = Math.max(nextCursor, fresh[fresh.length - 1].id || 0, S.lastPollId);
         // 频道：正停留在底部阅读 → 同步已读位置，回列表不残留红点
         if (S.activeChat && S.activeChat.type === 'channel' && isNearBottom()) {
           api('/channels/read.php', { method: 'POST', body: JSON.stringify({ channel_id: S.activeChat.id }) }).catch(() => {});
@@ -1056,12 +1081,10 @@ async function pollChatbox() {
 // 列表页：轻量汇总轮询，未读增长 → 震动提醒
 async function pollList() {
   try {
-    const [chData, pvData] = await Promise.all([
-      api('/channels/list.php'),
-      api('/private/list.php').catch(() => ({ chats: S.privateChats || [] }))
-    ]);
-    const nextCh = chData.channels || [];
-    const nextPv = pvData.chats || [];
+    // 统一同步接口：一次请求拿频道 + 私聊列表（短轮询）
+    const syncData = await api('/sync.php');
+    const nextCh = syncData.channels || [];
+    const nextPv = syncData.private_chats || [];
     const prev = S.unreadSnap;
     const next = {};
     let growth = false;       // 任意会话未读增长 → 需要重绘列表/红点

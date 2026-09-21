@@ -9,22 +9,10 @@
 
 require_once __DIR__ . '/../bootstrap.php';
 
-if ($_SERVER['REQUEST_METHOD'] !== 'GET') {
-    json_response(405, ['error' => 'method_not_allowed', 'message' => '仅支持 GET 请求']);
-}
+require_method('GET');
 
-// 不强制认证，但如果有 token 则获取用户用于 maybe 管理员详情
-$user = null;
-$token = get_bearer_token();
-if ($token !== '') {
-    $session = $db->get('sessions', ['token' => $token]);
-    if ($session && isset($session['expires_at']) && strtotime($session['expires_at']) < time()) {
-        $db->delete('sessions', ['token' => $token]);
-    } elseif ($session) {
-        $user = $db->get('users', ['id' => $session['user_id']]);
-        if ($user) unset($user['password']);
-    }
-}
+// 不强制认证，但如果有 token 则获取用户用于可能的管理员详情
+$user = optional_authenticate();
 
 // ═══════════════════════════════════════
 //  配置配额
