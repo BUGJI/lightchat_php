@@ -108,15 +108,13 @@ if ($accountType === 'bot') {
         'detail'      => json_encode(['bot_username' => $botUsername, 'creator_id' => $creator['id']], JSON_UNESCAPED_UNICODE),
     ]);
 
-    json_response(201, [
-        'success'    => true,
-        'message'    => 'Bot 注册成功',
+    json_success([
         'user_id'    => $userId,
         'username'   => $botUsername,
         'api_key'    => $apiKey,
         'creator_id' => (int)$creator['id'],
         'hint'       => '请求时在 Header 中加入 X-Bot-Key: ' . $apiKey,
-    ]);
+    ], 'Bot 注册成功', 201);
 }
 
 // ── 参数校验 ──
@@ -280,17 +278,17 @@ try {
     ]);
 } catch (Exception $e) {
     // 令牌创建失败不影响注册结果，回退为仅返回 userId
-    json_response(201, [
+    json_success([
         'user_id'  => $userId,
         'username' => $username,
-        'message'  => '注册成功，但登录令牌创建失败，请手动登录',
-    ]);
+        'warning'  => '注册成功，但登录令牌创建失败，请手动登录',
+    ], 'ok', 201);
 }
 
 // ── 成功响应 ──
-json_response(201, [
+json_success([
     'user_id'    => $userId,
     'username'   => $username,
     'token'      => $token,
     'expires_at' => $expiresAt,
-]);
+], 'ok', 201);

@@ -147,13 +147,25 @@ function saveApiBase() {
 
 function apiUrl(path) { return API_BASE + '/api' + path; }
 
+// 解析 JSON 响应；非 JSON（如致命错误页）时归一为统一错误对象
+async function parseJsonBody(res) {
+  try {
+    return await res.json();
+  } catch (e) {
+    return { success: false, data: null, error: { code: 'bad_response', message: '服务器响应异常（HTTP ' + res.status + '）' } };
+  }
+}
+
 async function req(path, opts = {}) {
   const headers = { 'Content-Type': 'application/json' };
   if (TOKEN) headers['Authorization'] = 'Bearer ' + TOKEN;
   const res = await fetch(apiUrl(path), { headers, ...opts });
-  const data = await res.json();
-  if (!res.ok) throw new Error(data.message || '请求失败');
-  return data;
+  const body = await parseJsonBody(res);
+  if (!res.ok || !body.success) {
+    const err = body.error || {};
+    throw new Error(err.message || err.code || '请求失败');
+  }
+  return body.data;
 }
 
 async function get(path) { return req(path); }
@@ -310,8 +322,8 @@ async function joinChannelAsBot(botId, channelId) {
     const botKey = botData.keys[0].api_key;
     const headers = { 'Content-Type': 'application/json', 'X-Bot-Key': botKey };
     const res = await fetch(apiUrl('/channels/join.php'), { method: 'POST', headers, body: JSON.stringify({ channel_id: channelId }) });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.message);
+    const body = await parseJsonBody(res);
+    if (!res.ok || !body.success) throw new Error((body.error && body.error.message) || '加入失败');
     toast('✅ Bot 已加入频道');
   } catch(e) { toast('加入失败: ' + e.message); }
 }

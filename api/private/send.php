@@ -76,48 +76,57 @@ try {
         $lastMsgPreview = $content ?: '[文件]';
     }
 
-    if (!$chat) {
-        $chatId = $db->insert('private_chats', [
-            'user1_id'        => $u1,
-            'user2_id'        => $u2,
-            'last_message'    => mb_substr($lastMsgPreview, 0, 100, 'UTF-8'),
-            'last_message_at' => date('Y-m-d H:i:s'),
-        ]);
-    } else {
-        $chatId = (int)$chat['id'];
-        $db->update('private_chats', [
-            'last_message'    => mb_substr($lastMsgPreview, 0, 100, 'UTF-8'),
-            'last_message_at' => date('Y-m-d H:i:s'),
-        ], ['id' => $chatId]);
-    }
-
-    // ── 构建私聊消息数据 ──
-    $messageData = [
-        'chat_id'      => $chatId,
-        'from_user_id' => $user['id'],
-        'to_user_id'   => $toUserId,
-        'type'         => $type,
-        'content'      => $content,
-        'is_read'      => 0,
-    ];
-
-    // 关联文件（记录待关联的文件 ID，insert 消息后回填归属）
-    $attachFileId = null;
-    if ($fileId !== null && $fileId > 0) {
-        $upload = $db->get('uploads', ['id' => $fileId, 'user_id' => $user['id']]);
-        if ($upload) {
-            $messageData['file_url']  = $upload['file_path'] ?? '';
-            $messageData['file_size'] = $upload['file_size'] ?? 0;
-            $attachFileId = (int)$fileId;
+    // 会话 + 消息 + 文件归属同一事务：LocalDriver 下合并为每表一次落盘
+    $db->beginTransaction();
+    try {
+        if (!$chat) {
+            $chatId = $db->insert('private_chats', [
+                'user1_id'        => $u1,
+                'user2_id'        => $u2,
+                'last_message'    => mb_substr($lastMsgPreview, 0, 100, 'UTF-8'),
+                'last_message_at' => date('Y-m-d H:i:s'),
+            ]);
+        } else {
+            $chatId = (int)$chat['id'];
+            $db->update('private_chats', [
+                'last_message'    => mb_substr($lastMsgPreview, 0, 100, 'UTF-8'),
+                'last_message_at' => date('Y-m-d H:i:s'),
+            ], ['id' => $chatId]);
         }
-    }
 
-    // ── 存储私聊消息 ──
-    $messageId = $db->insert('private_messages', $messageData);
+        // ── 构建私聊消息数据 ──
+        $messageData = [
+            'chat_id'      => $chatId,
+            'from_user_id' => $user['id'],
+            'to_user_id'   => $toUserId,
+            'type'         => $type,
+            'content'      => $content,
+            'is_read'      => 0,
+        ];
 
-    // 文件归属：把上传记录关联到刚创建的消息（原代码置 null，方向反了）
-    if ($attachFileId !== null) {
-        $db->update('uploads', ['message_id' => $messageId], ['id' => $attachFileId]);
+        // 关联文件（记录待关联的文件 ID，insert 消息后回填归属）
+        $attachFileId = null;
+        if ($fileId !== null && $fileId > 0) {
+            $upload = $db->get('uploads', ['id' => $fileId, 'user_id' => $user['id']]);
+            if ($upload) {
+                $messageData['file_url']  = $upload['file_path'] ?? '';
+                $messageData['file_size'] = $upload['file_size'] ?? 0;
+                $attachFileId = (int)$fileId;
+            }
+        }
+
+        // ── 存储私聊消息 ──
+        $messageId = $db->insert('private_messages', $messageData);
+
+        // 文件归属：把上传记录关联到刚创建的消息（原代码置 null，方向反了）
+        if ($attachFileId !== null) {
+            $db->update('uploads', ['message_id' => $messageId], ['id' => $attachFileId]);
+        }
+
+        $db->commit();
+    } catch (Exception $e) {
+        $db->rollback();
+        throw $e;
     }
 
     // ── 触发离线通知（接收消息时检查） ──
@@ -154,9 +163,8 @@ try {
     json_response(500, ['error' => 'send_failed', 'message' => '私聊消息发送失败']);
 }
 
-json_response(201, [
-    'success'    => true,
+json_success([
     'message_id' => $messageId,
     'chat_id'    => $chatId,
     'content'    => $content,
-]);
+], 'ok', 201);

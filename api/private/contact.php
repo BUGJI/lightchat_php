@@ -85,7 +85,7 @@ if ($action === 'update') {
             'hidden'  => 0,
         ], $updates));
     }
-    json_success(['success' => true, 'chat_id' => $chatId]);
+    json_success(['chat_id' => $chatId]);
 }
 
 if ($action === 'delete') {
@@ -102,7 +102,7 @@ if ($action === 'delete') {
             'hidden_at' => $now,
         ]);
     }
-    json_success(['success' => true, 'chat_id' => $chatId, 'hidden' => true]);
+    json_success(['chat_id' => $chatId, 'hidden' => true]);
 }
 
 json_response(400, ['error' => 'invalid_action', 'message' => '未知操作']);

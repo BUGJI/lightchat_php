@@ -97,14 +97,12 @@ if ($action === 'ban') {
         'detail'      => json_encode(['username' => $target['username'], 'reason' => $reason, 'expires_at' => $expiresAt], JSON_UNESCAPED_UNICODE),
     ]);
 
-    json_response(201, [
-        'success'    => true,
+    json_success([
         'ban_id'     => (int)$banId,
         'user_id'    => $targetUserId,
         'username'   => $target['username'],
         'expires_at' => $expiresAt,
-        'message'    => $expiresAt ? "已封禁至 {$expiresAt}" : '已永久封禁',
-    ]);
+    ], $expiresAt ? "已封禁至 {$expiresAt}" : '已永久封禁', 201);
 }
 
 // ── unban ──
@@ -122,9 +120,7 @@ $db->insert('audit_logs', [
 ]);
 
 json_success([
-    'success'  => true,
     'user_id'  => $targetUserId,
     'username' => $target['username'],
     'removed'  => $deleted > 0,
-    'message'  => $deleted > 0 ? '已解除封禁' : '该用户未被封禁',
 ]);

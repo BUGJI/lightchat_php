@@ -18,11 +18,11 @@
 | 兼容 | PHP 7.4+；内置 mbstring polyfill，弱扩展环境也能跑；支持共享虚拟主机（无 cron、无常驻进程） |
 | 频道 | 公开 / 私密频道、创建 / 解散 / 退出、**成员邀请链接**、owner / admin / member 三级角色（成员不可改频道名，权限按角色锁定） |
 | 私聊 | 会话化私聊、**已读回执与未读红点**、**联系人管理**（备注名 / 免打扰 🔕 / 删除好友；删除后对方或己方再次发消息自动恢复会话） |
-| 消息 | 文本 / 图片 / 文件上传、历史记录、实时轮询、删除、敏感词过滤 |
+| 消息 | 文本 / 图片 / 文件上传、历史记录、**短轮询**（单次请求立即返回，无长连接/长轮询）、删除、敏感词过滤 |
 | 通知 | PushPlus / Webhook / Email 三通道（邮件默认关闭，需填真实 SMTP 后开启） |
 | Bot | 管理员登录后创建 Bot 获得永久 `api_key`，随附 **Python SDK**（`sdk/`），可禁启 / 重生成 Key / 删除，全程审计 |
 | 管理 | 审计日志、用户封禁、数据导出、服务器资源 / 流量用量状态（`api/server/status.php`）、健康检查（`api/health.php`） |
-| 安全 | 全 API Token 鉴权 + 细粒度权限、防注入 / XSS 转义输出、登录与操作限流、IP 记录、聊天内容明文合规留存 |
+| 安全 | 全 API Token 鉴权 + 细粒度权限、**会话令牌仅存哈希**、防注入 / XSS 转义输出、登录与操作限流、CORS 可配置、上传类型严格校验、IP 记录、聊天内容明文合规留存 |
 | 客户端 | `public/index.html`（桌面/手机标准界面）、`public/wear_lightchat.html`（手表/小屏穿戴界面）、根目录 `index.html` 设备选择页 |
 
 ## 快速开始
@@ -41,6 +41,7 @@
 ## 配置
 
 - 主配置 `config.php`：版本、默认角色（guest/member/vip/admin）、细粒度权限表、用户名规则、私密字段、**存储驱动**（`database.driver`：local / mysql / sqlite / pdo）、上传（local/oss/cos 驱动、大小/带宽/缩略图）、敏感词开关、配额、通知开关等
+- **跨域（CORS）**：`api.cors.allowed_origins` 控制，默认 `['*']`；可填具体域名如 `['https://a.com']`、通配子域如 `['https://*.example.com']`，或逗号分隔字符串。安装向导中「跨域来源（CORS）」一栏可填写，也可在 `config.local.php` 覆盖
 - 本机部署配置写入 `config.local.php`（向导生成），优先级高于 `config.php` 对应项
 - 修改存储驱动时请先备份 `data/`，并按驱动要求准备数据库连接信息
 
@@ -107,9 +108,10 @@ python3 sdk/example_bot.py --base http://your-host --key bot_xxx...
 | 模块 | 端点 |
 |---|---|
 | 安装 / 健康 | `install.php` · `api/health.php` |
-| 认证 | `api/token/register.php` · `login.php` · `refresh.php` |
+| 认证 | `api/token/register.php` · `login.php` · `refresh.php` · `logout.php` |
 | 频道 | `api/channels/list.php` · `create.php` · `join.php` · `leave.php` · `update.php` · `delete.php` · `invite.php`（成员邀请）· `members.php`（成员/角色）· `read.php`（已读上报） |
 | 消息 | `api/messages/send.php` · `history.php` · `poll.php` · `delete.php` |
+| 同步 | `api/sync.php`（**单次短轮询**同时返回消息 + 频道列表 + 私聊列表，前端默认使用） |
 | 私聊 | `api/private/list.php` · `create.php`（发起/恢复）· `send.php` · `history.php` · `contact.php`（备注/免打扰/删除） |
 | 用户 | `api/users/profile.php` · `search.php` · `list.php` · `test_notification.php` |
 | 文件 | `api/files/upload.php` |

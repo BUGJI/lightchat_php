@@ -107,8 +107,4 @@ try {
     json_response(500, ['error' => 'create_failed', 'message' => '频道创建失败']);
 }
 
-json_response(201, [
-    'success'    => true,
-    'channel_id' => $channelId,
-    'message'    => '频道创建成功',
-]);
+json_success(['channel_id' => $channelId], '频道创建成功', 201);

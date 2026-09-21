@@ -43,4 +43,4 @@ $db->update('channel_members', ['last_read_message_id' => $lastReadId], [
     'user_id'    => $user['id'],
 ]);
 
-json_success(['success' => true, 'last_read_message_id' => $lastReadId]);
+json_success(['last_read_message_id' => $lastReadId]);

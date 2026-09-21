@@ -27,8 +27,8 @@ LightChat 是一个基于 PHP 7.4 的轻量级即时通讯后端，使用本地 
 
 - **Base URL:** `http://<host>/api`
 - **Content-Type:** `application/json; charset=utf-8`
-- **CORS:** 支持跨域（`Access-Control-Allow-Origin: *`）
-- **认证方式:** Bearer Token（用户会话） 或 `X-Bot-Key`（Bot API Key）
+- **CORS:** 由 `config.php` / `config.local.php` 的 `api.cors.allowed_origins` 控制，默认 `['*']`（放开所有来源）。支持精确白名单 `['https://a.com']` 与通配子域 `['https://*.example.com']`，也可写成逗号分隔字符串；安装向导可配置。
+- **认证方式:** Bearer Token（用户会话） 或 `X-Bot-Key`（Bot API Key）。会话令牌在服务端仅保存 `sha256` 哈希，数据库/文件泄露也无法直接复用。
 
 ---
 
@@ -58,23 +58,43 @@ X-Bot-Key: bot_<random_hex>
 
 ### 2.3 成功响应格式
 
-所有成功响应（除少数特例外）遵循统一结构：
+所有成功响应遵循统一信封，业务数据统一放在 `data` 字段内：
+
 ```json
 {
   "success": true,
-  "message": "ok",
-  // ... 具体数据字段
+  "data": {
+    "user_id": 1,
+    "username": "zhangsan"
+  },
+  "error": null
 }
 ```
+
+> 信封固定包含 `success` / `data` / `error` 三个顶层字段。成功时 `error` 恒为 `null`，业务字段全部位于 `data` 下（下文各接口示例中的响应字段均指 `data` 内的字段）。
+>
+> **成功提示**：部分接口会在 `data.message` 中附带人类可读提示（如“频道创建成功”“已退出登录”）；它属于 `data`，非固定字段，客户端可忽略。
+>
+> **判定依据为 HTTP 状态码**：4xx/5xx 一律按错误信封返回；2xx 一律按成功信封返回。因此 2xx 响应中的业务字段即使命名为 `error`，也会作为普通数据原样返回，不会被误判为错误。为清晰起见，业务字段仍建议避免与顶层 `success` / `data` / `error` 同名。
+>
+> **例外（文件下载）**：`api/admin/export.php` 与 `api/admin/audit.php?export=1` 通过 `Content-Disposition` 直接输出数据文件（JSON 数组/对象），不使用统一信封。
 
 ### 2.4 错误响应格式
 
+所有错误响应遵循统一信封，错误细节集中在 `error` 对象中（`code` 为机器可读错误码，`message` 为人类可读信息），`data` 恒为 `null`：
+
 ```json
 {
-  "error": "<error_code>",
-  "message": "<人类可读信息>"
+  "success": false,
+  "data": null,
+  "error": {
+    "code": "<error_code>",
+    "message": "<人类可读信息>"
+  }
 }
 ```
+
+HTTP 状态码保持真实语义（不统一改为 200），见下表。
 
 常见 HTTP 状态码：
 
@@ -133,10 +153,14 @@ X-Bot-Key: bot_<random_hex>
 
 ```json
 {
-  "user_id": 1,
-  "username": "zhangsan",
-  "token": "a1b2c3d4e5f6...",
-  "expires_at": "2026-06-10 03:18:00"
+  "success": true,
+  "data": {
+    "user_id": 1,
+    "username": "zhangsan",
+    "token": "a1b2c3d4e5f6...",
+    "expires_at": "2026-06-10 03:18:00"
+  },
+  "error": null
 }
 ```
 
@@ -145,12 +169,14 @@ X-Bot-Key: bot_<random_hex>
 ```json
 {
   "success": true,
-  "message": "Bot 注册成功",
-  "user_id": 2,
-  "username": "bot_mybot",
-  "api_key": "bot_a1b2c3d4e5f6...",
-  "creator_id": 1,
-  "hint": "请求时在 Header 中加入 X-Bot-Key: bot_a1b2c3d4e5f6..."
+  "data": {
+    "user_id": 2,
+    "username": "bot_mybot",
+    "api_key": "bot_a1b2c3d4e5f6...",
+    "creator_id": 1,
+    "hint": "请求时在 Header 中加入 X-Bot-Key: bot_a1b2c3d4e5f6..."
+  },
+  "error": null
 }
 ```
 
@@ -212,11 +238,15 @@ curl -X POST http://localhost/api/token/register.php \
 
 ```json
 {
-  "user_id": 1,
-  "username": "zhangsan",
-  "role": "member",
-  "token": "a1b2c3d4e5f6...",
-  "expires_at": "2026-06-10 03:18:00"
+  "success": true,
+  "data": {
+    "user_id": 1,
+    "username": "zhangsan",
+    "role": "member",
+    "token": "a1b2c3d4e5f6...",
+    "expires_at": "2026-06-10 03:18:00"
+  },
+  "error": null
 }
 ```
 
@@ -271,8 +301,12 @@ curl -X POST http://localhost/api/token/refresh.php \
 
 ```json
 {
-  "token": "f7e8d9c0b1a2...",
-  "expires_at": "2026-06-10 04:18:00"
+  "success": true,
+  "data": {
+    "token": "f7e8d9c0b1a2...",
+    "expires_at": "2026-06-10 04:18:00"
+  },
+  "error": null
 }
 ```
 
@@ -303,6 +337,34 @@ curl -X POST http://localhost/api/token/refresh.php \
 
 ---
 
+### 3.4 退出登录
+
+**`POST /api/token/logout.php`**
+
+销毁服务端当前会话（删除该 Token 对应的 session）。幂等：Token 无效或已过期同样返回成功，便于客户端干净登出。
+
+**认证：** 需要令牌（Header `Authorization: Bearer <token>`）
+
+**成功响应 (200)：**
+
+```json
+{
+  "success": true,
+  "data": {
+  },
+  "error": null
+}
+```
+
+**curl 示例：**
+
+```bash
+curl -X POST http://localhost/api/token/logout.php \
+  -H "Authorization: Bearer a1b2c3d4e5f6..."
+```
+
+---
+
 ## 4. 系统与健康检查
 
 ### 4.1 环境诊断
@@ -317,42 +379,13 @@ curl -X POST http://localhost/api/token/refresh.php \
 
 ```json
 {
-  "all_ok": true,
-  "base_dir": ".../",
-  "checks": {
-    "php_version": {
-      "ok": true,
-      "value": "7.4.33",
-      "msg": "OK"
-    },
-    "ext_json": { "ok": true, "msg": "OK" },
-    "ext_mbstring": { "ok": true, "msg": "OK" },
-    "ext_pcre": { "ok": true, "msg": "OK" },
-    "ext_ctype": { "ok": true, "msg": "OK" },
-    "ext_fileinfo": { "ok": true, "msg": "OK" },
-    "file_config.php": {
-      "ok": true,
-      "path": ".../config.php",
-      "msg": "OK"
-    },
-    "file_core/Database.php": { "ok": true, "path": ".../core/Database.php", "msg": "OK" },
-    "file_core/DatabaseDriverInterface.php": { "ok": true, "path": ".../core/DatabaseDriverInterface.php", "msg": "OK" },
-    "file_drivers/LocalDriver.php": { "ok": true, "path": ".../drivers/LocalDriver.php", "msg": "OK" },
-    "file_api/bootstrap.php": { "ok": true, "path": ".../api/bootstrap.php", "msg": "OK" },
-    "dir_data/": {
-      "ok": true,
-      "exists": true,
-      "writable": true,
-      "path": ".../data/",
-      "owner": "www-data",
-      "msg": "OK"
-    },
-    "dir_uploads/": { "ok": true, "exists": true, "writable": true, "path": ".../uploads/", "owner": "www-data", "msg": "OK" },
-    "dir_logs/": { "ok": true, "exists": true, "writable": true, "path": ".../logs/", "owner": "www-data", "msg": "OK" },
-    "config_load": { "ok": true, "msg": "OK" },
-    "config_db_type": { "ok": true, "value": "local", "msg": "OK" }
+  "success": true,
+  "data": {
+    "all_ok": true,
+    "checks": { "...": "各检查项，键名见下" },
+    "hint": "一切正常，如果仍报错请检查 PHP 错误日志"
   },
-  "hint": "一切正常，如果仍报错请检查 PHP 错误日志"
+  "error": null
 }
 ```
 
@@ -360,10 +393,16 @@ curl -X POST http://localhost/api/token/refresh.php \
 
 ```json
 {
-  "all_ok": false,
-  "base_dir": ".../",
-  "checks": { ... },
-  "hint": "请修复上面标记为 ❌ 的项"
+  "success": false,
+  "data": {
+    "all_ok": false,
+    "checks": { "...": "各检查项，键名见下" },
+    "hint": "请修复上面标记为 ❌ 的项"
+  },
+  "error": {
+    "code": "health_check_failed",
+    "message": "环境检查未通过，请修复上面标记为 ❌ 的项"
+  }
 }
 ```
 
@@ -388,38 +427,40 @@ curl http://localhost/api/health.php | python -m json.tool
 ```json
 {
   "success": true,
-  "message": "ok",
-  "quota": {
-    "monthly_network_flow_mb": 0,
-    "disk_space_mb": 0,
-    "max_connections": 0,
-    "max_processes": 0,
-    "max_upload_mbps": 0,
-    "max_download_mbps": 0
+  "data": {
+    "quota": {
+      "monthly_network_flow_mb": 0,
+      "disk_space_mb": 0,
+      "max_connections": 0,
+      "max_processes": 0,
+      "max_upload_mbps": 0,
+      "max_download_mbps": 0
+    },
+    "disk": {
+      "app_used_mb": 12.45,
+      "data_kb": 1024.0,
+      "uploads_kb": 512.0,
+      "free_mb": 50000.0,
+      "total_mb": 100000.0,
+      "used_pct": 50.0
+    },
+    "usage": {
+      "network_flow_mb": 1.234,
+      "disk_used_mb": 12.45,
+      "active_sessions": 3,
+      "total_requests": 128,
+      "month": "2026-08",
+      "last_reset_date": "2026-08-01"
+    },
+    "php": {
+      "version": "7.4.33",
+      "memory_limit": "128M",
+      "post_max_size": "8M",
+      "upload_max_filesize": "2M",
+      "max_execution_time": 30
+    }
   },
-  "disk": {
-    "app_used_mb": 12.45,
-    "data_kb": 1024.0,
-    "uploads_kb": 512.0,
-    "free_mb": 50000.0,
-    "total_mb": 100000.0,
-    "used_pct": 50.0
-  },
-  "usage": {
-    "network_flow_mb": 1.234,
-    "disk_used_mb": 12.45,
-    "active_sessions": 3,
-    "total_requests": 128,
-    "month": "2026-08",
-    "last_reset_date": "2026-08-01"
-  },
-  "php": {
-    "version": "7.4.33",
-    "memory_limit": "128M",
-    "post_max_size": "8M",
-    "upload_max_filesize": "2M",
-    "max_execution_time": 30
-  }
+  "error": null
 }
 ```
 
@@ -479,20 +520,22 @@ curl http://localhost/api/server/status.php \
 ```json
 {
   "success": true,
-  "message": "ok",
-  "user": {
-    "id": 1,
-    "username": "zhangsan",
-    "email": "zhangsan@example.com",
-    "avatar": "/uploads/avatar_1_1680000000.jpg",
-    "nickname": "张三",
-    "bio": "一个普通的用户",
-    "signature": "Hello World",
-    "role": "member",
-    "status": 1,
-    "created_at": "2026-05-01 12:00:00",
-    "last_active_at": "2026-06-09 15:18:00"
-  }
+  "data": {
+    "user": {
+      "id": 1,
+      "username": "zhangsan",
+      "email": "zhangsan@example.com",
+      "avatar": "/uploads/avatar_1_1680000000.jpg",
+      "nickname": "张三",
+      "bio": "一个普通的用户",
+      "signature": "Hello World",
+      "role": "member",
+      "status": 1,
+      "created_at": "2026-05-01 12:00:00",
+      "last_active_at": "2026-06-09 15:18:00"
+    }
+  },
+  "error": null
 }
 ```
 
@@ -501,15 +544,17 @@ curl http://localhost/api/server/status.php \
 ```json
 {
   "success": true,
-  "message": "ok",
-  "user": {
-    "id": 2,
-    "username": "lisi",
-    "avatar": null,
-    "role": "member",
-    "join_date": "2026-05-10 08:00:00",
-    "status": 1
-  }
+  "data": {
+    "user": {
+      "id": 2,
+      "username": "lisi",
+      "avatar": null,
+      "role": "member",
+      "join_date": "2026-05-10 08:00:00",
+      "status": 1
+    }
+  },
+  "error": null
 }
 ```
 
@@ -561,7 +606,9 @@ curl "http://localhost/api/users/profile.php?user_id=2" \
 ```json
 {
   "success": true,
-  "message": "资料已更新"
+  "data": {
+  },
+  "error": null
 }
 ```
 
@@ -623,27 +670,29 @@ curl -X POST http://localhost/api/users/profile.php \
 ```json
 {
   "success": true,
-  "message": "ok",
-  "users": [
-    {
-      "id": 1,
-      "username": "zhangsan",
-      "nickname": "张三",
-      "avatar": "/uploads/avatar_1_1680000000.jpg",
-      "role": "member",
-      "status": 1,
-      "created_at": "2026-05-01 12:00:00"
-    },
-    {
-      "id": 2,
-      "username": "lisi",
-      "nickname": "李四",
-      "avatar": null,
-      "role": "vip",
-      "status": 1,
-      "created_at": "2026-05-10 08:00:00"
-    }
-  ]
+  "data": {
+    "users": [
+      {
+        "id": 1,
+        "username": "zhangsan",
+        "nickname": "张三",
+        "avatar": "/uploads/avatar_1_1680000000.jpg",
+        "role": "member",
+        "status": 1,
+        "created_at": "2026-05-01 12:00:00"
+      },
+      {
+        "id": 2,
+        "username": "lisi",
+        "nickname": "李四",
+        "avatar": null,
+        "role": "vip",
+        "status": 1,
+        "created_at": "2026-05-10 08:00:00"
+      }
+    ]
+  },
+  "error": null
 }
 ```
 
@@ -688,17 +737,19 @@ curl http://localhost/api/users/list.php \
 ```json
 {
   "success": true,
-  "message": "ok",
-  "users": [
-    {
-      "id": 1,
-      "username": "zhangsan",
-      "nickname": "张三",
-      "avatar": "/uploads/avatar_1.jpg",
-      "role": "member",
-      "signature": "Hello"
-    }
-  ]
+  "data": {
+    "users": [
+      {
+        "id": 1,
+        "username": "zhangsan",
+        "nickname": "张三",
+        "avatar": "/uploads/avatar_1.jpg",
+        "role": "member",
+        "signature": "Hello"
+      }
+    ]
+  },
+  "error": null
 }
 ```
 
@@ -741,8 +792,10 @@ curl "http://localhost/api/users/search.php?q=张三&limit=10" \
 ```json
 {
   "success": true,
-  "channel_id": 5,
-  "message": "频道创建成功"
+  "data": {
+    "channel_id": 5
+  },
+  "error": null
 }
 ```
 
@@ -785,21 +838,23 @@ curl -X POST http://localhost/api/channels/create.php \
 ```json
 {
   "success": true,
-  "message": "ok",
-  "channels": [
-    {
-      "id": 1,
-      "name": "general",
-      "display_name": "综合频道",
-      "type": "public",
-      "description": "默认的综合聊天频道",
-      "announcement": null,
-      "owner_id": 0,
-      "member_count": 15,
-      "is_joined": true,
-      "created_at": "2026-05-01 12:00:00"
-    }
-  ]
+  "data": {
+    "channels": [
+      {
+        "id": 1,
+        "name": "general",
+        "display_name": "综合频道",
+        "type": "public",
+        "description": "默认的综合聊天频道",
+        "announcement": null,
+        "owner_id": 0,
+        "member_count": 15,
+        "is_joined": true,
+        "created_at": "2026-05-01 12:00:00"
+      }
+    ]
+  },
+  "error": null
 }
 ```
 
@@ -846,7 +901,9 @@ curl http://localhost/api/channels/list.php \
 ```json
 {
   "success": true,
-  "message": "已加入频道"
+  "data": {
+  },
+  "error": null
 }
 ```
 
@@ -892,7 +949,9 @@ curl -X POST http://localhost/api/channels/join.php \
 ```json
 {
   "success": true,
-  "message": "已退出频道"
+  "data": {
+  },
+  "error": null
 }
 ```
 
@@ -962,8 +1021,11 @@ curl -X POST http://localhost/api/channels/leave.php \
 ```json
 {
   "success": true,
-  "message_id": 100,
-  "content": "Hello World"
+  "data": {
+    "message_id": 100,
+    "content": "Hello World"
+  },
+  "error": null
 }
 ```
 
@@ -1034,26 +1096,28 @@ curl -X POST http://localhost/api/messages/send.php \
 ```json
 {
   "success": true,
-  "message": "ok",
-  "messages": [
-    {
-      "id": 100,
-      "channel_id": 1,
-      "user_id": 1,
-      "username": "zhangsan",
-      "avatar": "/uploads/avatar_1.jpg",
-      "role": "member",
-      "parent_id": 0,
-      "type": "text",
-      "content": "Hello World",
-      "file_url": null,
-      "file_size": null,
-      "mentioned_users": null,
-      "is_deleted": 0,
-      "created_at": "2026-06-09 15:10:00"
-    }
-  ],
-  "has_more": true
+  "data": {
+    "messages": [
+      {
+        "id": 100,
+        "channel_id": 1,
+        "user_id": 1,
+        "username": "zhangsan",
+        "avatar": "/uploads/avatar_1.jpg",
+        "role": "member",
+        "parent_id": 0,
+        "type": "text",
+        "content": "Hello World",
+        "file_url": null,
+        "file_size": null,
+        "mentioned_users": null,
+        "is_deleted": 0,
+        "created_at": "2026-06-09 15:10:00"
+      }
+    ],
+    "has_more": true
+  },
+  "error": null
 }
 ```
 
@@ -1091,11 +1155,11 @@ curl "http://localhost/api/messages/history.php?channel_id=1&after=100&limit=20"
 
 ---
 
-### 7.3 消息轮询（长轮询）
+### 7.3 消息轮询（短轮询）
 
-**`GET /api/messages/poll.php?channels=<ids>&since_id=<id>&private_chat_id=<id>&timeout=<s>`**
+**`GET /api/messages/poll.php?channels=<ids>&since_id=<id>&private_chat_id=<id>&private_since_id=<id>`**
 
-用于客户端实时拉取新消息。支持长轮询：有新消息立即返回，无新消息等待直到超时。
+用于客户端拉取新消息。**短轮询：单次请求立即返回，不使用长轮询/长连接**，客户端应定时（建议 2~3 秒）调用。
 
 **认证：** 需要认证
 
@@ -1103,48 +1167,51 @@ curl "http://localhost/api/messages/history.php?channel_id=1&after=100&limit=20"
 
 | 参数 | 类型 | 必填 | 说明 |
 |------|------|------|------|
-| `channels` | string | 条件必填 | 频道 ID 列表（逗号分隔），如 `"1,2,3"` |
-| `since_id` | int | 否 | 上次获取的最大消息 ID（不含此 ID 之后的才算新） |
-| `private_chat_id` | int | 否 | 私聊会话 ID（与 channels 可同时使用） |
-| `timeout` | int | 否 | 长轮询超时秒数（1-30，默认 25） |
+| `channels` | string | 否 | 频道 ID 列表（逗号分隔），如 `"1,2,3"`；服务端单次聚合查询 |
+| `since_id` | int | 否 | 频道消息游标：仅返回 id > 此值的消息 |
+| `private_chat_id` | int | 否 | 私聊会话 ID（与 channels 可同时传入） |
+| `private_since_id` | int | 否 | 私聊消息游标（缺省回退到 `since_id`） |
 
-> 注意：轮询结果不包含用户自己发送的消息，且不会重复获取 `since_id` 之前的消息。
+> 注意：频道与私聊消息分别游标；响应含 `latest_id` 与 `private_latest_id`。轮询结果不包含用户自己发送的消息（但游标仍会前进），不会重复获取游标之前的消息。
 
 **有新消息 — 立即返回 (200)：**
 
 ```json
 {
   "success": true,
-  "message": "ok",
-  "messages": [
-    {
-      "id": 105,
-      "channel_id": 1,
-      "user_id": 2,
-      "username": "lisi",
-      "avatar": null,
-      "parent_id": 0,
-      "type": "text",
-      "content": "你好",
-      "file_url": null,
-      "mentioned_users": null,
-      "created_at": "2026-06-09 15:18:05"
-    },
-    {
-      "id": 50,
-      "private_chat_id": 3,
-      "from_user_id": 3,
-      "username": "wangwu",
-      "avatar": "/uploads/avatar_3.jpg",
-      "type": "text",
-      "content": "私聊消息",
-      "file_url": null,
-      "file_size": 0,
-      "is_read": 0,
-      "created_at": "2026-06-09 15:18:10"
-    }
-  ],
-  "latest_id": 105
+  "data": {
+    "messages": [
+      {
+        "id": 105,
+        "channel_id": 1,
+        "user_id": 2,
+        "username": "lisi",
+        "avatar": null,
+        "parent_id": 0,
+        "type": "text",
+        "content": "你好",
+        "file_url": null,
+        "mentioned_users": null,
+        "created_at": "2026-06-09 15:18:05"
+      },
+      {
+        "id": 50,
+        "private_chat_id": 3,
+        "from_user_id": 3,
+        "username": "wangwu",
+        "avatar": "/uploads/avatar_3.jpg",
+        "type": "text",
+        "content": "私聊消息",
+        "file_url": null,
+        "file_size": 0,
+        "is_read": 0,
+        "created_at": "2026-06-09 15:18:10"
+      }
+    ],
+    "latest_id": 105,
+    "private_latest_id": 50
+  },
+  "error": null
 }
 ```
 
@@ -1157,27 +1224,70 @@ curl "http://localhost/api/messages/history.php?channel_id=1&after=100&limit=20"
 | `is_read` | int | 是否已读（poll 返回时自动标记为已读） |
 | `file_size` | int | 附件大小(字节) |
 
-**超时无新消息 — 返回空 (200)：**
+**无新消息 — 返回空 (200)：**
 
 ```json
 {
   "success": true,
-  "message": "ok",
-  "messages": [],
-  "latest_id": 104
+  "data": {
+    "messages": [],
+    "latest_id": 104,
+    "private_latest_id": 50
+  },
+  "error": null
 }
 ```
 
 **curl 示例：**
 
 ```bash
-# 长轮询频道1,2的新消息
-curl "http://localhost/api/messages/poll.php?channels=1,2&since_id=104&timeout=25" \
+# 拉取频道1,2的新消息
+curl "http://localhost/api/messages/poll.php?channels=1,2&since_id=104" \
   -H "Authorization: Bearer <token>"
 
-# 同时轮询频道和私聊
-curl "http://localhost/api/messages/poll.php?channels=1,2&since_id=104&private_chat_id=3&timeout=25" \
+# 同时拉取频道和私聊（各自游标）
+curl "http://localhost/api/messages/poll.php?channels=1,2&since_id=104&private_chat_id=3&private_since_id=50" \
   -H "Authorization: Bearer <token>"
+```
+
+---
+
+### 7.3.1 统一同步接口（推荐）
+
+**`GET /api/sync.php?channels=<ids>&since_id=<id>&private_chat_id=<id>&private_since_id=<id>&lists=<0|1>`**
+
+一次请求同时返回「增量消息 + 频道列表 + 私聊列表」，替代 `poll.php` + `channels/list.php` + `private/list.php` 三次请求。**短轮询，单次立即返回**，前端默认每 3 秒调用一次。
+
+**认证：** 需要认证
+
+**查询参数：** 同 7.3；额外 `lists`（默认 `1`，传 `0` 时只取消息、不计算列表，用于只关心消息的场景）。
+
+**响应 (200)：**
+
+```json
+{
+  "success": true,
+  "data": {
+    "messages": [ /* 同 7.3 */ ],
+    "latest_id": 120,
+    "private_latest_id": 12,
+    "channels": [ /* 同 /api/channels/list.php 的 channels */ ],
+    "private_chats": [ /* 同 /api/private/list.php 的 chats */ ]
+  },
+  "error": null
+}
+```
+
+> `channels` / `private_chats` 为数组，仅在 `lists != 0` 时返回。
+
+**curl 示例：**
+
+```bash
+# 活跃为频道：取频道增量 + 侧边栏列表
+curl "http://localhost/api/sync.php?channels=1,2&since_id=120" -H "Authorization: Bearer <token>"
+
+# 活跃为私聊：只取消息（不计算列表）
+curl "http://localhost/api/sync.php?lists=0&private_chat_id=3&private_since_id=12" -H "Authorization: Bearer <token>"
 ```
 
 ---
@@ -1207,7 +1317,9 @@ curl "http://localhost/api/messages/poll.php?channels=1,2&since_id=104&private_c
 ```json
 {
   "success": true,
-  "message": "消息已删除"
+  "data": {
+  },
+  "error": null
 }
 ```
 
@@ -1268,9 +1380,12 @@ curl -X POST http://localhost/api/messages/delete.php \
 ```json
 {
   "success": true,
-  "message_id": 50,
-  "chat_id": 3,
-  "content": "私聊内容"
+  "data": {
+    "message_id": 50,
+    "chat_id": 3,
+    "content": "私聊内容"
+  },
+  "error": null
 }
 ```
 
@@ -1316,38 +1431,40 @@ curl -X POST http://localhost/api/private/send.php \
 ```json
 {
   "success": true,
-  "message": "ok",
-  "messages": [
-    {
-      "id": 48,
-      "chat_id": 3,
-      "from_user_id": 1,
-      "to_user_id": 2,
-      "username": "zhangsan",
-      "avatar": "/uploads/avatar_1.jpg",
-      "type": "text",
-      "content": "你好",
-      "file_url": null,
-      "file_size": 0,
-      "is_read": 1,
-      "created_at": "2026-06-09 15:15:00"
-    },
-    {
-      "id": 49,
-      "chat_id": 3,
-      "from_user_id": 2,
-      "to_user_id": 1,
-      "username": "lisi",
-      "avatar": null,
-      "type": "text",
-      "content": "你好啊！",
-      "file_url": null,
-      "file_size": 0,
-      "is_read": 1,
-      "created_at": "2026-06-09 15:16:00"
-    }
-  ],
-  "has_more": false
+  "data": {
+    "messages": [
+      {
+        "id": 48,
+        "chat_id": 3,
+        "from_user_id": 1,
+        "to_user_id": 2,
+        "username": "zhangsan",
+        "avatar": "/uploads/avatar_1.jpg",
+        "type": "text",
+        "content": "你好",
+        "file_url": null,
+        "file_size": 0,
+        "is_read": 1,
+        "created_at": "2026-06-09 15:15:00"
+      },
+      {
+        "id": 49,
+        "chat_id": 3,
+        "from_user_id": 2,
+        "to_user_id": 1,
+        "username": "lisi",
+        "avatar": null,
+        "type": "text",
+        "content": "你好啊！",
+        "file_url": null,
+        "file_size": 0,
+        "is_read": 1,
+        "created_at": "2026-06-09 15:16:00"
+      }
+    ],
+    "has_more": false
+  },
+  "error": null
 }
 ```
 
@@ -1383,20 +1500,22 @@ curl "http://localhost/api/private/history.php?chat_id=3&limit=50" \
 ```json
 {
   "success": true,
-  "message": "ok",
-  "chats": [
-    {
-      "id": 3,
-      "other_user_id": 2,
-      "other_username": "lisi",
-      "other_avatar": null,
-      "other_role": "member",
-      "last_message": "你好啊！",
-      "last_message_at": "2026-06-09 15:16:00",
-      "unread_count": 2,
-      "created_at": "2026-06-09 15:15:00"
-    }
-  ]
+  "data": {
+    "chats": [
+      {
+        "id": 3,
+        "other_user_id": 2,
+        "other_username": "lisi",
+        "other_avatar": null,
+        "other_role": "member",
+        "last_message": "你好啊！",
+        "last_message_at": "2026-06-09 15:16:00",
+        "unread_count": 2,
+        "created_at": "2026-06-09 15:15:00"
+      }
+    ]
+  },
+  "error": null
 }
 ```
 
@@ -1449,12 +1568,15 @@ curl http://localhost/api/private/list.php \
 ```json
 {
   "success": true,
-  "file_id": 10,
-  "file_url": "/uploads/20260609_a1b2c3d4e5f6.jpg",
-  "file_name": "photo.jpg",
-  "file_size": 204800,
-  "file_type": "image",
-  "mime_type": "image/jpeg"
+  "data": {
+    "file_id": 10,
+    "file_url": "/uploads/20260609_a1b2c3d4e5f6.jpg",
+    "file_name": "photo.jpg",
+    "file_size": 204800,
+    "file_type": "image",
+    "mime_type": "image/jpeg"
+  },
+  "error": null
 }
 ```
 
@@ -1465,13 +1587,16 @@ curl http://localhost/api/private/list.php \
 ```json
 {
   "success": true,
-  "file_id": 5,
-  "file_url": "/uploads/20260608_existing.jpg",
-  "file_name": "photo.jpg",
-  "file_size": 204800,
-  "file_type": "image",
-  "mime_type": "image/jpeg",
-  "duplicate": true
+  "data": {
+    "file_id": 5,
+    "file_url": "/uploads/20260608_existing.jpg",
+    "file_name": "photo.jpg",
+    "file_size": 204800,
+    "file_type": "image",
+    "mime_type": "image/jpeg",
+    "duplicate": true
+  },
+  "error": null
 }
 ```
 
@@ -1523,12 +1648,14 @@ Bot 用户名自动加 `bot_` 前缀以避免和普通用户冲突。
 ```json
 {
   "success": true,
-  "message": "Bot 创建成功",
-  "user_id": 10,
-  "username": "bot_mybot",
-  "api_key": "bot_a1b2c3d4e5f6...",
-  "creator_id": 1,
-  "hint": "请求时在 Header 中加入 X-Bot-Key: bot_a1b2c3d4e5f6..."
+  "data": {
+    "user_id": 10,
+    "username": "bot_mybot",
+    "api_key": "bot_a1b2c3d4e5f6...",
+    "creator_id": 1,
+    "hint": "请求时在 Header 中加入 X-Bot-Key: bot_a1b2c3d4e5f6..."
+  },
+  "error": null
 }
 ```
 
@@ -1567,22 +1694,24 @@ curl -X POST http://localhost/api/bot/create.php \
 ```json
 {
   "success": true,
-  "message": "ok",
-  "bots": [
-    {
-      "id": 10,
-      "username": "bot_weather",
-      "status": 1,
-      "creator": {
-        "id": 1,
-        "username": "zhangsan"
-      },
-      "has_active_key": true,
-      "last_used_at": "2026-06-09 15:00:00",
-      "created_at": "2026-05-20 10:00:00"
-    }
-  ],
-  "count": 1
+  "data": {
+    "bots": [
+      {
+        "id": 10,
+        "username": "bot_weather",
+        "status": 1,
+        "creator": {
+          "id": 1,
+          "username": "zhangsan"
+        },
+        "has_active_key": true,
+        "last_used_at": "2026-06-09 15:00:00",
+        "created_at": "2026-05-20 10:00:00"
+      }
+    ],
+    "count": 1
+  },
+  "error": null
 }
 ```
 
@@ -1593,27 +1722,29 @@ curl -X POST http://localhost/api/bot/create.php \
 ```json
 {
   "success": true,
-  "message": "ok",
-  "bot": {
-    "id": 10,
-    "username": "bot_weather",
-    "status": 1,
-    "creator": {
-      "id": 1,
-      "username": "zhangsan"
-    },
-    "created_at": "2026-05-20 10:00:00"
-  },
-  "keys": [
-    {
-      "id": 5,
-      "api_key": "bot_a1b2c3d4e5f6...",
-      "name": "天气播报机器人",
-      "active": 1,
-      "last_used_at": "2026-06-09 15:00:00",
+  "data": {
+    "bot": {
+      "id": 10,
+      "username": "bot_weather",
+      "status": 1,
+      "creator": {
+        "id": 1,
+        "username": "zhangsan"
+      },
       "created_at": "2026-05-20 10:00:00"
-    }
-  ]
+    },
+    "keys": [
+      {
+        "id": 5,
+        "api_key": "bot_a1b2c3d4e5f6...",
+        "name": "天气播报机器人",
+        "active": 1,
+        "last_used_at": "2026-06-09 15:00:00",
+        "created_at": "2026-05-20 10:00:00"
+      }
+    ]
+  },
+  "error": null
 }
 ```
 
@@ -1641,8 +1772,10 @@ curl -X POST http://localhost/api/bot/create.php \
 ```json
 {
   "success": true,
-  "message": "Bot 已禁用",
-  "status": 0
+  "data": {
+    "status": 0
+  },
+  "error": null
 }
 ```
 
@@ -1663,8 +1796,10 @@ curl -X POST http://localhost/api/bot/create.php \
 ```json
 {
   "success": true,
-  "message": "API Key 已重新生成",
-  "api_key": "bot_f7e8d9c0b1a2..."
+  "data": {
+    "api_key": "bot_f7e8d9c0b1a2..."
+  },
+  "error": null
 }
 ```
 
@@ -1684,8 +1819,10 @@ curl -X POST http://localhost/api/bot/create.php \
 ```json
 {
   "success": true,
-  "message": "Bot 已删除",
-  "deleted": 10
+  "data": {
+    "deleted": 10
+  },
+  "error": null
 }
 ```
 
@@ -1835,33 +1972,35 @@ curl "http://localhost/api/admin/export.php?type=messages&format=json" \
 ```json
 {
   "success": true,
-  "message": "ok",
-  "stats": {
-    "total_logs": 150,
-    "action_counts": {
-      "login": 80,
-      "register": 10,
-      "logout": 60
+  "data": {
+    "stats": {
+      "total_logs": 150,
+      "action_counts": {
+        "login": 80,
+        "register": 10,
+        "logout": 60
+      }
+    },
+    "logs": [
+      {
+        "id": 150,
+        "user_id": 1,
+        "username": "zhangsan",
+        "action": "login",
+        "detail": null,
+        "ip": "192.168.1.1",
+        "user_agent": "Mozilla/5.0 ...",
+        "created_at": "2026-06-09 15:18:00"
+      }
+    ],
+    "count": 80,
+    "params": {
+      "action": "login",
+      "user_id": "(all)",
+      "limit": 100
     }
   },
-  "logs": [
-    {
-      "id": 150,
-      "user_id": 1,
-      "username": "zhangsan",
-      "action": "login",
-      "detail": null,
-      "ip": "192.168.1.1",
-      "user_agent": "Mozilla/5.0 ...",
-      "created_at": "2026-06-09 15:18:00"
-    }
-  ],
-  "count": 80,
-  "params": {
-    "action": "login",
-    "user_id": "(all)",
-    "limit": 100
-  }
+  "error": null
 }
 ```
 

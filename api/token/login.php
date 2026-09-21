@@ -160,7 +160,7 @@ $expiresAt      = date('Y-m-d H:i:s', time() + $sessionLifetime);
 try {
     $db->insert('sessions', [
         'user_id'    => $user['id'],
-        'token'      => $token,
+        'token'      => hash_token($token),   // 仅存哈希，不存明文
         'ip'         => $_SERVER['REMOTE_ADDR'] ?? '',
         'user_agent' => $_SERVER['HTTP_USER_AGENT'] ?? '',
         'expires_at' => $expiresAt,

@@ -45,18 +45,18 @@ if ($user['id'] !== $uid1 && $user['id'] !== $uid2) {
 }
 
 // ── 获取消息 ──
+// id DESC 快速路径：LocalDriver 从尾部倒序提前终止，避免全量加载整段私聊
 $where = ['chat_id' => $chatId];
-
-// ── 获取消息（id ASC = 旧→新），取最新一批 ──
-$allMsgs = $db->select('private_messages', $where, '*', 'id ASC');
-$total = count($allMsgs);
-$start = max(0, $total - $limit - 1);
-$msgs = array_slice($allMsgs, $start, $limit + 1);
+if ($before > 0) {
+    $where['id <'] = $before;
+}
+$msgs = $db->select('private_messages', $where, '*', 'id DESC', $limit + 1);
 
 $hasMore = count($msgs) > $limit;
 if ($hasMore) {
-    array_pop($msgs);
+    array_pop($msgs); // 去掉多取的一条（DESC 时多取的在尾部）
 }
+$msgs = array_reverse($msgs); // 反转为旧→新，保持原响应顺序
 
 // ── 过滤已删除 ──
 $filtered = [];
@@ -80,6 +80,7 @@ foreach ([$uid1, $uid2] as $uid) {
 
 // ── 格式化 ──
 $messages = [];
+$readIds  = [];
 foreach ($filtered as $msg) {
     $sender = isset($userCache[(int)$msg['from_user_id']]) ? $userCache[(int)$msg['from_user_id']] : null;
 
@@ -98,10 +99,14 @@ foreach ($filtered as $msg) {
         'created_at'   => $msg['created_at'] ?? '',
     ];
 
-    // 标记为已读
+    // 收集本页需置读的消息，循环结束后一次写入
     if ((int)$msg['to_user_id'] === $user['id'] && (int)$msg['is_read'] === 0) {
-        $db->update('private_messages', ['is_read' => 1], ['id' => $msg['id']]);
+        $readIds[] = (int)$msg['id'];
     }
+}
+
+if (!empty($readIds)) {
+    $db->update('private_messages', ['is_read' => 1], ['id' => $readIds]);
 }
 
 json_success([

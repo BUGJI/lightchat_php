@@ -58,4 +58,4 @@ $chatId = $db->insert('private_chats', [
     'last_message_at' => null,
 ]);
 
-json_response(201, ['success' => true, 'chat_id' => $chatId, 'created' => true]);
+json_success(['chat_id' => $chatId, 'created' => true], 'ok', 201);

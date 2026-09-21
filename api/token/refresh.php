@@ -42,9 +42,9 @@ if ($token === '') {
     json_response(400, ['error' => 'missing_token', 'message' => '缺少令牌']);
 }
 
-// ── 查询会话 ──
+// ── 查询会话（兼容旧明文令牌并自动升级为哈希） ──
 try {
-    $session = $db->get('sessions', ['token' => $token]);
+    $session = get_session_by_token($token);
 } catch (Exception $e) {
     json_response(500, ['error' => 'db_error', 'message' => '数据库查询失败']);
 }
@@ -57,7 +57,7 @@ if (!$session) {
 if (isset($session['expires_at']) && strtotime($session['expires_at']) < time()) {
     // 令牌已过期，清理
     try {
-        $db->delete('sessions', ['token' => $token]);
+        $db->delete('sessions', ['id' => $session['id']]);
     } catch (Exception $e) {
         // 忽略清理错误
     }
@@ -94,10 +94,10 @@ $expiresAt      = date('Y-m-d H:i:s', time() + $sessionLifetime);
 // ── 事务：删除旧令牌，创建新令牌 ──
 try {
     $db->beginTransaction();
-    $db->delete('sessions', ['token' => $token]);
+    $db->delete('sessions', ['id' => $session['id']]);
     $db->insert('sessions', [
         'user_id'    => $session['user_id'],
-        'token'      => $newToken,
+        'token'      => hash_token($newToken),   // 仅存哈希，不存明文
         'ip'         => $_SERVER['REMOTE_ADDR'] ?? '',
         'user_agent' => $_SERVER['HTTP_USER_AGENT'] ?? '',
         'expires_at' => $expiresAt,

@@ -57,33 +57,26 @@ if (!role_at_least($user['role'], 'admin')) {
     $where['is_deleted != '] = 1;
 }
 
-// ── 获取消息：id DESC 快速路径（LocalDriver 倒序提前终止，避免全量扫描） ──
-// 取 limit+1 条用于判断 has_more，再反转回 id ASC（旧→新）
-$msgs = $db->select('messages', $where, '*', 'id DESC', $limit + 1);
-
 if ($after > 0) {
-    // 获取 after 之后的新消息：先取足够大的 DESC 窗口再过滤
-    $msgs = [];
-    $allRecent = $db->select('messages', $where, '*', 'id DESC', 200);
-    foreach ($allRecent as $m) {
-        if ((int)$m['id'] > $after) {
-            $msgs[] = $m;
-        }
+    // 增量拉取 after 之后的新消息：条件下推 + id ASC，只取 limit+1 条
+    $where['id >'] = $after;
+    $msgs = $db->select('messages', $where, '*', 'id ASC', $limit + 1);
+    $hasMore = count($msgs) > $limit;
+    if ($hasMore) {
+        array_pop($msgs); // ASC 时多取的在尾部
     }
-    $msgs = array_slice($msgs, 0, $limit + 1);
 } else {
-    // 默认：取最新的一批
+    // 默认 / 向前翻页：id DESC 快速路径（LocalDriver 倒序提前终止，避免全量扫描）
+    if ($before > 0) {
+        $where['id <'] = $before;
+    }
     $msgs = $db->select('messages', $where, '*', 'id DESC', $limit + 1);
+    $hasMore = count($msgs) > $limit;
+    if ($hasMore) {
+        array_pop($msgs); // 去掉多取的那条
+    }
+    $msgs = array_reverse($msgs); // 反转回 id ASC（旧→新），保持原响应顺序
 }
-
-// ── 分页处理 ──
-$hasMore = count($msgs) > $limit;
-if ($hasMore) {
-    array_pop($msgs); // 去掉多取的那条
-}
-
-// 反转回 id ASC（旧→新），保持原响应顺序
-$msgs = array_reverse($msgs);
 
 // ── 组装用户信息（批量获取发消息的用户） ──
 $userIds = [];

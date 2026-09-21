@@ -547,16 +547,27 @@ const S = {
 };
 
 /* ── Fetch 封装 ── */
+// 解析 JSON 响应；服务器返回非 JSON（如致命错误页）时归一为统一错误对象
+async function parseJsonBody(res) {
+  try {
+    return await res.json();
+  } catch (e) {
+    return { success: false, data: null, error: { code: 'bad_response', message: '服务器响应异常（HTTP ' + res.status + '）' } };
+  }
+}
+
 async function req(url, opts = {}) {
   const headers = { 'Content-Type': 'application/json' };
   if (S.token) headers['Authorization'] = 'Bearer ' + S.token;
   const res = await fetch(api(url), { headers, ...opts });
-  const data = await res.json();
-  if (!res.ok && data.error && data.message) {
-    if (res.status === 401) { logout(); throw new Error(data.message); }
-    throw new Error(data.message);
+  const body = await parseJsonBody(res);
+  if (!res.ok || !body.success) {
+    const err = body.error || {};
+    const msg = err.message || err.code || '请求失败';
+    if (res.status === 401) { logout(); throw new Error(msg); }
+    throw new Error(msg);
   }
-  return data;
+  return body.data;
 }
 
 async function get(url)  { return req(url); }
@@ -569,16 +580,19 @@ async function uploadFile(file) {
   const headers = {};
   if (S.token) headers['Authorization'] = 'Bearer ' + S.token;
   const res = await fetch(api('/api/files/upload.php'), { method:'POST', headers, body: form });
-  const data = await res.json();
-  if (!res.ok) throw new Error(data.message || '上传失败');
-  return data;
+  const body = await parseJsonBody(res);
+  if (!res.ok || !body.success) throw new Error((body.error && body.error.message) || '上传失败');
+  return body.data;
 }
 
 /* ── 认证 ── */
 function logout() {
+  const t = S.token;
   S.user = null; S.token = null;
   localStorage.removeItem('lc_token');
   stopPolling();
+  // 通知服务端销毁会话（失败不影响本地登出）
+  if (t) { try { fetch(api('/api/token/logout.php'), { method:'POST', headers:{ 'Authorization':'Bearer '+t } }).catch(()=>{}); } catch(e) {} }
   showAuth('login');
 }
 
@@ -975,7 +989,7 @@ async function sendFileMessage(fileId, fileType, uploadData) {
   scrollToBottom();
 }
 
-/* ── 长轮询 ── */
+/* ── 短轮询（无长连接） ── */
 function startPolling() {
   stopPolling();
   S.pollGen++;   // 使所有飞行中的旧 poll 响应在返回时被判定为过期
@@ -991,21 +1005,29 @@ async function poll() {
 
   const genAtStart = S.pollGen;   // 快照本轮所属"代"，用于丢弃过期响应
   try {
-    let url;
+    // 统一同步接口：一次请求同时拿消息 + 频道列表 + 私聊列表（短轮询）
+    let qs;
     if (S.activeChat.type === 'channel') {
-      // 聚合轮询所有已加入频道（+ 当前可能未加入的公告/公开频道），确保任何频道的新消息都能收到
+      // 聚合所有已加入频道（+ 当前可能未加入的公告/公开频道），确保任何频道的新消息都能收到
       const allIds = [...S.joinedChannelIds];
       const activeCid = S.activeChat.id;
       if (!allIds.includes(activeCid)) allIds.push(activeCid);
-      const channelsParam = allIds.join(',');
-      url = '/api/messages/poll.php?channels=' + encodeURIComponent(channelsParam) + '&since_id=' + S.lastPollId + '&timeout=15';
+      qs = 'channels=' + encodeURIComponent(allIds.join(',')) + '&since_id=' + S.lastPollId;
     } else {
-      url = '/api/messages/poll.php?private_chat_id=' + S.activeChat.id + '&since_id=' + S.lastPollId + '&timeout=15';
+      qs = 'private_chat_id=' + S.activeChat.id + '&private_since_id=' + S.lastPollId;
     }
 
     const headers = { 'Authorization': 'Bearer ' + S.token };
-    const res = await fetch(api(url), { headers });
-    const data = await res.json();
+    const res = await fetch(api('/api/sync.php?' + qs), { headers });
+    const body = await parseJsonBody(res);
+
+    // 统一信封：401 直接登出，其余非成功响应静默丢弃
+    if (!res.ok || !body.success) {
+      if (res.status === 401) { logout(); return; }
+      S.pollingTimer = setTimeout(poll, 3000);
+      return;
+    }
+    const data = body.data || {};
 
     // 响应返回时若用户已切换过对话（startPolling 递增了 pollGen），
     // 丢弃本批过期结果：避免把已读消息重新计入未读、或插入到错误会话
@@ -1100,17 +1122,21 @@ async function poll() {
         }
       }
 
-      S.lastPollId = data.latest_id || S.lastPollId;
-      renderSidebar();
+      // 频道与私聊消息游标分属不同表，按当前会话类型更新对应游标
+      S.lastPollId = (S.activeChat.type === 'private'
+        ? (data.private_latest_id || data.latest_id)
+        : (data.latest_id || data.private_latest_id)) || S.lastPollId;
     }
 
-    // 同时刷新私聊列表与频道未读（检查新消息/未读数，覆盖本地旧值）
-    try { await loadPrivateChatsSilent(); } catch(e) {}
-    try { await loadChannelsSilent(); } catch(e) {}
+    // 同步响应内已含频道/私聊列表：原地更新未读数后重绘侧边栏（无需额外请求）
+    if (Array.isArray(data.channels)) applyChannelsSnapshot(data.channels);
+    if (Array.isArray(data.private_chats)) applyPrivateChatsSnapshot(data.private_chats);
+    renderSidebar();
 
   } catch(e) { /* 网络错误静默处理 */ }
 
-  S.pollingTimer = setTimeout(poll, 1500);
+  // 短轮询间隔（无长连接）
+  S.pollingTimer = setTimeout(poll, 3000);
 }
 
 async function loadPrivateChatsSilent() {
@@ -1135,6 +1161,38 @@ async function loadChannelsSilent() {
     }
   }
   if (changed) renderSidebar();
+}
+
+// 用 /api/sync.php 的频道快照原地更新 S.channels（复用对象，保留 activeChat.channel 引用）
+function applyChannelsSnapshot(channels) {
+  const byId = new Map(S.channels.map(c => [c.id, c]));
+  const joined = new Set();
+  const merged = [];
+  for (const c of channels) {
+    const existing = byId.get(c.id);
+    if (existing) {
+      existing.unread_count = c.unread_count || 0;
+      existing.is_joined = !!c.is_joined;
+      if (c.display_name) existing.display_name = c.display_name;
+      if (typeof c.member_count !== 'undefined') existing.member_count = c.member_count;
+      if (typeof c.announcement !== 'undefined') existing.announcement = c.announcement;
+      merged.push(existing);
+    } else {
+      merged.push(c);
+    }
+    if (c.is_joined) joined.add(c.id);
+  }
+  // 保留服务端未返回的本地频道（避免瞬时缺失导致 activeChat 引用断裂）
+  const serverIds = new Set(channels.map(c => c.id));
+  for (const c of S.channels) if (!serverIds.has(c.id)) merged.push(c);
+
+  S.channels = merged;
+  S.joinedChannelIds = joined;
+}
+
+// 用 /api/sync.php 的私聊快照更新列表
+function applyPrivateChatsSnapshot(chats) {
+  S.privateChats = chats;
 }
 
 /* ── 选择对话 ── */
